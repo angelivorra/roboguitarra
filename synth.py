@@ -274,13 +274,18 @@ class SynthEngine:
                 self.shifter.set_robot(self.params["robot"])
 
     def set_pitch_bend(self, value):
-        """Pitch bend MIDI (0..16383, centro 8192). Afecta a todos los canales."""
+        """Pitch bend MIDI (0..16383, centro 8192). Afecta a todos los canales.
+
+        Ojo: pyfluidsynth.pitch_bend() espera un valor CON SIGNO (0 = sin bend)
+        y le suma 8192 internamente, así que convertimos el valor MIDI crudo
+        restándole 8192.
+        """
         with self._lock:
             self._ensure()
             v = max(0, min(16383, int(value)))
             self.params["pitch"] = v
             for ch in range(16):
-                self.fs.pitch_bend(ch, v)
+                self.fs.pitch_bend(ch, v - 8192)
 
     # ------------------------------------------------------------------ notas
     def note_on(self, key, velocity=100, channel=0):
