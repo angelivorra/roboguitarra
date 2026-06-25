@@ -87,8 +87,8 @@ def api_set_params():
             )
         if "pitch" in data:
             engine.set_pitch_bend(data["pitch"])
-        if "shift" in data:
-            engine.set_shift(data["shift"])
+        if "robot" in data:
+            engine.set_robot(data["robot"])
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": str(exc)}), 500
     return jsonify(engine.get_state())

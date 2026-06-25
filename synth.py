@@ -54,8 +54,9 @@ class SynthEngine:
             # Pitch bend MIDI: 0..16383, centro 8192 = sin bend (transitorio,
             # no se guarda en la sesión; arranca centrado).
             "pitch": 8192,
-            # Frequency shifter LADSPA (efecto robótico): 0..5000 Hz, 0 = off.
-            "shift": 0.0,
+            # Efecto robótico LADSPA, knob bipolar [-1, 1]: 0 = limpio,
+            # >0 = frequency shifter (metálico), <0 = bitcrusher (8 bits).
+            "robot": 0.0,
         }
         self.shifter = None
         self.ladspa_error = None
@@ -253,24 +254,24 @@ class SynthEngine:
         """Carga el frequency shifter LADSPA (efecto robótico). Si falla, se
         ignora: el resto del motor sigue funcionando sin el efecto."""
         try:
-            from ladspa import FreqShifter
+            from ladspa import RobotFx
 
-            shifter = FreqShifter(self.fs.synth)
-            if shifter.load():
-                self.shifter = shifter
+            fx = RobotFx(self.fs.synth)
+            if fx.load():
+                self.shifter = fx
             else:
                 self.shifter = None
-                self.ladspa_error = shifter.error
+                self.ladspa_error = fx.error
         except Exception as exc:  # noqa: BLE001
             self.shifter = None
             self.ladspa_error = str(exc)
 
-    def set_shift(self, hz):
-        """Cantidad de desplazamiento de frecuencia (efecto robótico), 0..5000 Hz."""
+    def set_robot(self, t):
+        """Efecto robótico, knob bipolar [-1, 1] (0 = limpio)."""
         with self._lock:
-            self.params["shift"] = max(0.0, min(5000.0, float(hz)))
+            self.params["robot"] = max(-1.0, min(1.0, float(t)))
             if self.shifter:
-                self.shifter.set(self.params["shift"])
+                self.shifter.set_robot(self.params["robot"])
 
     def set_pitch_bend(self, value):
         """Pitch bend MIDI (0..16383, centro 8192). Afecta a todos los canales."""

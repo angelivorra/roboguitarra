@@ -5,9 +5,13 @@ __pycache__/
 
 # soundfonts (pueden pesar mucho; se colocan a mano en la Pi)
 soundfonts/*.sf2
+soundfonts/*.SF2
 
 # sesión guardada (último sf2/instrumento)
 last_session.json
+
+# grabaciones
+*.wav
 
 # varios
 .DS_Store

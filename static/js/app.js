@@ -143,9 +143,9 @@ function debounce(fn, ms) {
 // Configuración por knob: cómo se envía al motor y cómo se muestra el valor.
 //  - gain  : volumen real (0..2)
 //  - pitch : bend MIDI 0..16383 (centro 8192); el knob 0..1 -> 0..16383
-//  - shift : frequency shifter robótico (0..1 -> 0..MAX_SHIFT_HZ Hz)
+//  - robot : efecto robótico bipolar (centro limpio, ↑ shifter, ↓ bitcrush)
 const PITCH_RANGE_ST = 2; // semitonos a cada lado (pitch_wheel_sens por defecto)
-const MAX_SHIFT_HZ = 1500; // recorrido útil del frequency shifter (plugin llega a 5000)
+const MAX_SHIFT_HZ = 1500; // recorrido del frequency shifter en la mitad de arriba
 const KNOB_CONFIG = {
   gain: {
     onChange: debounce((v) => api("/api/params", { gain: v }), 40),
@@ -158,9 +158,15 @@ const KNOB_CONFIG = {
       return (st >= 0 ? "+" : "") + st.toFixed(1) + " st";
     },
   },
-  shift: {
-    onChange: debounce((v) => api("/api/params", { shift: Math.round(v * MAX_SHIFT_HZ) }), 40),
-    format: (v) => Math.round(v * MAX_SHIFT_HZ) + " Hz",
+  // Bipolar: knob 0..1 -> t en [-1, 1]. Centro = limpio.
+  robot: {
+    onChange: debounce((v) => api("/api/params", { robot: (v - 0.5) * 2 }), 40),
+    format: (v) => {
+      const t = (v - 0.5) * 2;
+      if (t > 0.02) return "↑ " + Math.round(t * MAX_SHIFT_HZ) + " Hz";
+      if (t < -0.02) return "↓ crush " + Math.round(-t * 100) + "%";
+      return "limpio";
+    },
   },
 };
 
@@ -177,8 +183,8 @@ function applyState(state) {
   if (!p) return;
   if (knobs.gain && typeof p.gain === "number") knobs.gain.setValue(p.gain);
   if (knobs.pitch && typeof p.pitch === "number") knobs.pitch.setValue(p.pitch / 16383);
-  if (knobs.shift && typeof p.shift === "number")
-    knobs.shift.setValue(p.shift / MAX_SHIFT_HZ);
+  if (knobs.robot && typeof p.robot === "number")
+    knobs.robot.setValue(p.robot / 2 + 0.5);
 }
 
 // ----------------------------------------------------------------- MIDI
