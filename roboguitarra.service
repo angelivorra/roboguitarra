@@ -1,0 +1,24 @@
+# Unidad systemd para arrancar Roboguitarra al encender la Raspberry Pi.
+#
+# Instalación en la Pi:
+#   sudo cp roboguitarra.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now roboguitarra
+#
+# Ajusta User, WorkingDirectory y las variables de entorno a tu equipo.
+[Unit]
+Description=Roboguitarra - sintetizador SoundFont web (FluidSynth)
+After=sound.target network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/roboguitarra
+Environment=ROBOGUITARRA_AUDIO_DRIVER=alsa
+# Descomenta y ajusta al dispositivo del HAT (ver `aplay -l`)
+# Environment=ROBOGUITARRA_ALSA_DEVICE=hw:0
+ExecStart=/home/pi/roboguitarra/.venv/bin/python /home/pi/roboguitarra/app.py
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

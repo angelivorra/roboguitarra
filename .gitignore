@@ -1,0 +1,13 @@
+# entorno python
+.venv/
+__pycache__/
+*.pyc
+
+# soundfonts (pueden pesar mucho; se colocan a mano en la Pi)
+soundfonts/*.sf2
+
+# sesión guardada (último sf2/instrumento)
+last_session.json
+
+# varios
+.DS_Store

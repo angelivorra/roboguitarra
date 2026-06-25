@@ -1,0 +1,23 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Roboguitarra: Crear entorno (venv + dependencias)",
+      "type": "shell",
+      "command": "python3 -m venv .venv && ./.venv/bin/pip install --upgrade pip && ./.venv/bin/pip install -r requirements.txt",
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "detail": "Crea el entorno virtual .venv e instala Flask, pyFluidSynth, sf2utils y waitress."
+    },
+    {
+      "label": "Roboguitarra: Ejecutar",
+      "type": "shell",
+      "command": "[ -d .venv ] || (python3 -m venv .venv && ./.venv/bin/pip install --upgrade pip && ./.venv/bin/pip install -r requirements.txt); ./.venv/bin/python app.py",
+      "problemMatcher": [],
+      "isBackground": true,
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "group": { "kind": "build", "isDefault": true },
+      "detail": "Crea el entorno si no existe y arranca el servidor en http://localhost:5000"
+    }
+  ]
+}

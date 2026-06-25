@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="theme-color" content="#0d1117" />
+  <title>Roboguitarra</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>🎸 Roboguitarra</h1>
+    <span id="status" class="status status--off">motor: …</span>
+  </header>
+
+  <main>
+    <!-- 1. SoundFont -->
+    <section class="card">
+      <h2>SoundFont</h2>
+      <div class="row">
+        <select id="sf2-select" aria-label="Archivo SoundFont"></select>
+        <button id="sf2-load" class="btn btn--primary">Cargar</button>
+      </div>
+      <p id="sf2-current" class="hint">Ninguno cargado</p>
+    </section>
+
+    <!-- 2. Instrumento -->
+    <section class="card">
+      <h2>Instrumento</h2>
+      <div class="row">
+        <select id="inst-select" aria-label="Instrumento" disabled></select>
+        <button id="inst-select-btn" class="btn" disabled>Seleccionar</button>
+      </div>
+      <p id="inst-current" class="hint">—</p>
+    </section>
+
+    <!-- 3. Entrada MIDI -->
+    <section class="card">
+      <div class="row row--between">
+        <h2>Entrada MIDI</h2>
+        <div class="row">
+          <button id="midi-refresh" class="btn btn--small">↻ Refrescar</button>
+          <button id="panic" class="btn btn--danger btn--small">Pánico</button>
+        </div>
+      </div>
+      <div class="row">
+        <select id="midi-select" aria-label="Fuente MIDI"></select>
+        <button id="midi-connect" class="btn btn--primary">Conectar</button>
+      </div>
+      <p id="midi-current" class="hint">—</p>
+    </section>
+
+    <!-- 4. Modulación (estilo QSynth) -->
+    <section class="card">
+      <h2>Modulación</h2>
+      <div class="knobs">
+        <div class="knob" data-knob="gain" data-min="0" data-max="2" data-value="1">
+          <div class="knob__dial"><span class="knob__pointer"></span></div>
+          <span class="knob__label">Gain</span>
+          <output class="knob__val"></output>
+        </div>
+        <div class="knob" data-knob="pitch" data-min="0" data-max="1" data-value="0.5">
+          <div class="knob__dial"><span class="knob__pointer"></span></div>
+          <span class="knob__label">Pitch</span>
+          <output class="knob__val"></output>
+        </div>
+        <div class="knob" data-knob="shift" data-min="0" data-max="1" data-value="0">
+          <div class="knob__dial"><span class="knob__pointer"></span></div>
+          <span class="knob__label">Robot</span>
+          <output class="knob__val"></output>
+        </div>
+      </div>
+      <p class="hint">Gain = volumen · Pitch = bend (±2 semitonos) · Robot = frequency shifter (0 = sin efecto). (Arrastra arriba/abajo; doble toque para centrar/reiniciar.)</p>
+    </section>
+  </main>
+
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
