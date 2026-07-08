@@ -14,38 +14,44 @@
 //  Se puede recalibrar en caliente sin reflashear con el comando
 //  serie "CALIBRAR" (ver parser de comandos abajo).
 //
-//  Logs del mástil: solo "Dedo -> traste N" y "Dedo fuera".
+//  Logs del mástil: "SUENA canal C traste T" al empezar una nota y
+//  "CALLA canal C (dedo fuera)" al apagarla al levantar el dedo.
 // ============================================================
 #define MODO_CALIBRACION 0
 
 // --- Hardware -----------------------------------------------
-// Preparado para 3 cuerdas: amplía los arrays y NUM_CUERDAS.
-const uint8_t NUM_CUERDAS = 1;
+// Cuerda 1 = 1ª de guitarra (Mi agudo), 2 = 2ª (Si), 3 = 3ª (Sol).
+const uint8_t NUM_CUERDAS = 3;
 const uint8_t NUM_TRASTES = 17;
-const uint8_t PIN_SENSOR[NUM_CUERDAS] = { A0 };
-const uint8_t PIN_BOTON[NUM_CUERDAS]  = { 4 };   // arcade a GND, INPUT_PULLUP
+const uint8_t PIN_SENSOR[NUM_CUERDAS] = { A1, A0, A2 };
+const uint8_t PIN_BOTON[NUM_CUERDAS]  = { 3, 4, 5 };  // arcade a GND, INPUT_PULLUP
 
 // Joystick analógico (global, no por cuerda)
 const uint8_t PIN_JOY_PITCH = A4;  // eje pitch bend
 const uint8_t PIN_JOY_CC    = A5;  // eje CC (reverb / chorus)
 const uint8_t PIN_JOY_BTN   = 6;   // pulsador del stick (sin función aún)
 
-// Nota MIDI de cada cuerda al aire. Cuerda 2 de guitarra = Si3.
-const uint8_t NOTA_AIRE[NUM_CUERDAS] = { 59 };
+// Nota MIDI de cada cuerda al aire: 1ª = Mi4 (64), 2ª = Si3 (59), 3ª = Sol3 (55).
+const uint8_t NOTA_AIRE[NUM_CUERDAS] = { 64, 59, 55 };
 
 const uint8_t VELOCIDAD  = 100;
 
 // Canales MIDI (0..15 en el byte de estado = canales 1..16).
-// Las notas se reparten por traste ciclando por estos tres canales:
-// trastes contiguos caen en canales distintos, así el solape legato
-// suena limpio. El bend y los CC del joystick se reemiten en estos
-// mismos canales. Ninguno es el 9 (percusión en General MIDI).
-const uint8_t CANALES[]    = { 0, 1, 2 };   // = canales MIDI 1, 2 y 3
+// UN CANAL POR CUERDA: la cuerda c emite en CANALES[c]. Así cada
+// cuerda es independiente (su propio pitch bend, sus notas) y dos
+// cuerdas pueden tocar la misma nota sin que el Note Off de una apague
+// la de la otra. El bend y los CC del joystick se reemiten en TODOS
+// estos canales. Ninguno es el 9 (percusión en General MIDI).
+// Debe haber al menos un canal por cuerda (NUM_CANALES >= NUM_CUERDAS).
+const uint8_t CANALES[]    = { 0, 1, 2 };   // cuerda 1->canal 1, 2->2, 3->3
 const uint8_t NUM_CANALES  = sizeof(CANALES) / sizeof(CANALES[0]);
 
-// CC que envía cada dirección del eje A5 (91 reverb, 93 chorus).
-const uint8_t CC_DIR_A = 91;
-const uint8_t CC_DIR_B = 93;
+// CC del eje A5: controla el efecto robot, bipolar con centro en 64 (limpio).
+// Igual que el knob "robot" de la web: un lado = frequency shifter, el otro =
+// bitcrusher. El servidor lo intercepta y lo mapea a set_robot(); FluidSynth no
+// lo consume. Debe coincidir con ROBOT_CC en config.py. CC 20 no se usa en GM.
+const uint8_t CC_ROBOT = 20;
+const uint8_t CC_ROBOT_CENTRO = 64;  // valor "limpio" (centro del joystick)
 
 // Joystick: zona muerta (cuentas ADC) y cadencia de envío.
 const int          JOY_ZONA_MUERTA  = 40;
@@ -66,9 +72,17 @@ int           margenHisteresis = 6;   // margen sobre la frontera de traste
 unsigned long tPulsaMs        = 4;    // confirmar dedo presente
 unsigned long tSueltaMs       = 120;  // confirmar dedo fuera (robusto a
                                       // microcortes del SoftPot al deslizar)
-unsigned long tTrasteMs       = 8;    // confirmar cambio de traste (descarta
-                                      // el transitorio al levantar el dedo)
+unsigned long tTrasteMs       = 8;    // confirmar SALTOS de >=2 trastes
+                                      // (descarta el transitorio al levantar
+                                      // el dedo; los cambios adyacentes de un
+                                      // slide se comprometen al instante)
 unsigned long tBotonMs        = 10;   // antirrebote del botón arcade
+
+// Diagnóstico del mástil (comando DEBUG <cuerda>, 0 = apagado): loguea,
+// SOLO para esa cuerda, cada zona nueva vista por el sensor, los
+// microcortes de contacto con su duración y la frecuencia del bucle.
+// Limitado a una cuerda para no saturar el serie (bloquearía el bucle).
+int8_t debugCuerda = -1;   // índice de cuerda a diagnosticar, -1 = off
 
 // ============================================================
 //  Calibración persistida en EEPROM
@@ -159,30 +173,71 @@ void calibrarGuiado() {
 // ============================================================
 //  MIDI USB
 // ============================================================
+// --- Guardián anti-atasco ------------------------------------
+// Si nadie lee el MIDI USB en el host (sinte sin abrir o caído), el
+// buffer del endpoint se llena y cada sendMIDI BLOQUEA ~250 ms,
+// arrastrando todo el bucle (y la detección de trastes) a ~2 Hz.
+// Medimos cuánto tarda cada envío: si se bloquea, descartamos los
+// siguientes y sondeamos cada MIDI_REINTENTO_MS con un solo paquete;
+// cuando el consumidor vuelve, se reanuda solo.
+const unsigned long MIDI_ATASCO_MS    = 50;    // envío más lento = atasco
+const unsigned long MIDI_REINTENTO_MS = 2000;  // cadencia de reintento
+
+bool          midiAtascado  = false;
+unsigned long midiReintento = 0;
+
+void midiEnvia(const midiEventPacket_t &ev) {
+  if (midiAtascado) {
+    if (millis() < midiReintento) return;          // descartar sin bloquear
+    midiReintento = millis() + MIDI_REINTENTO_MS;  // toca paquete de sondeo
+  }
+  unsigned long t0 = millis();
+  MidiUSB.sendMIDI(ev);
+  if (millis() - t0 > MIDI_ATASCO_MS) {
+    if (!midiAtascado)
+      Serial.println(F("MIDI atascado: sin consumidor, descartando envios"));
+    midiAtascado  = true;
+    midiReintento = millis() + MIDI_REINTENTO_MS;
+  } else if (midiAtascado) {
+    midiAtascado = false;
+    Serial.println(F("MIDI recuperado"));
+    // Silencia notas que quedaran colgadas mientras descartábamos.
+    for (uint8_t i = 0; i < NUM_CANALES; i++) {
+      midiEventPacket_t off = { 0x0B, (uint8_t)(0xB0 | CANALES[i]), 123, 0 };
+      MidiUSB.sendMIDI(off);
+    }
+    MidiUSB.flush();
+  }
+}
+
+void midiFlush() {
+  if (!midiAtascado) MidiUSB.flush();
+}
+
 void notaOn(uint8_t nota, uint8_t canal) {
   midiEventPacket_t ev = { 0x09, (uint8_t)(0x90 | canal), nota, VELOCIDAD };
-  MidiUSB.sendMIDI(ev);
+  midiEnvia(ev);
 }
 
 void notaOff(uint8_t nota, uint8_t canal) {
   midiEventPacket_t ev = { 0x08, (uint8_t)(0x80 | canal), nota, 0 };
-  MidiUSB.sendMIDI(ev);
+  midiEnvia(ev);
 }
 
-// Pitch bend en los tres canales de nota (14 bits: 0..16383, centro 8192).
+// Pitch bend en todos los canales de cuerda (14 bits: 0..16383, centro 8192).
 void enviaBend(int v) {
   for (uint8_t i = 0; i < NUM_CANALES; i++) {
     midiEventPacket_t ev = { 0x0E, (uint8_t)(0xE0 | CANALES[i]),
                              (uint8_t)(v & 0x7F), (uint8_t)((v >> 7) & 0x7F) };
-    MidiUSB.sendMIDI(ev);
+    midiEnvia(ev);
   }
 }
 
-// Control Change en los tres canales de nota.
+// Control Change en todos los canales de cuerda.
 void enviaCC(uint8_t cc, uint8_t valor) {
   for (uint8_t i = 0; i < NUM_CANALES; i++) {
     midiEventPacket_t ev = { 0x0B, (uint8_t)(0xB0 | CANALES[i]), cc, valor };
-    MidiUSB.sendMIDI(ev);
+    midiEnvia(ev);
   }
 }
 
@@ -220,12 +275,9 @@ uint8_t notaActual(uint8_t c) {
                          : NOTA_AIRE[c];                // al aire
 }
 
-// Canal MIDI de la nota actual: un canal por traste, ciclando por
-// CANALES. Al aire = índice 0; traste t (0..16) = índice t+1.
+// Canal MIDI de la cuerda: fijo, uno por cuerda.
 uint8_t canalActual(uint8_t c) {
-  EstadoCuerda &e = cuerda[c];
-  uint8_t idx = dedoPresente(e) ? (uint8_t)(e.traste + 1) : 0;
-  return CANALES[idx % NUM_CANALES];
+  return CANALES[c];
 }
 
 // Suena `nueva` y apaga la anterior (legato: primero on, luego off).
@@ -238,13 +290,26 @@ void cambiaNota(EstadoCuerda &e, uint8_t nueva, uint8_t canal) {
     notaOff(antNota, antCanal);
   e.notaSonando  = nueva;
   e.canalSonando = canal;
-  MidiUSB.flush();
+  midiFlush();
+
+  // Log: nota que empieza a sonar (canal MIDI 1-based + traste, o al aire).
+  Serial.print(F("SUENA  canal "));
+  Serial.print(canal + 1);
+  if (dedoPresente(e)) { Serial.print(F("  traste ")); Serial.print(e.traste + 1); }
+  else                 { Serial.print(F("  al aire")); }
+  Serial.print(F("  (nota "));
+  Serial.print(nueva);
+  Serial.println(F(")"));
 }
 
 void apagaCuerda(EstadoCuerda &e) {
   if (e.notaSonando >= 0) {
     notaOff(e.notaSonando, e.canalSonando);
-    MidiUSB.flush();
+    midiFlush();
+    // Log: la nota deja de sonar porque se ha levantado el dedo.
+    Serial.print(F("CALLA  canal "));
+    Serial.print(e.canalSonando + 1);
+    Serial.println(F("  (dedo fuera)"));
   }
   e.notaSonando = -1;
   e.activa = false;
@@ -292,8 +357,6 @@ void procesaMastil(uint8_t c, unsigned long ahora) {
         e.estado = DEDO_PUESTO;
         e.traste = trasteCrudo(valor);
         e.trastePend = e.traste;
-        Serial.print(F("Dedo -> traste "));
-        Serial.println(e.traste + 1);
         if (e.activa) cambiaNota(e, notaActual(c), canalActual(c));
       }
       break;
@@ -301,21 +364,44 @@ void procesaMastil(uint8_t c, unsigned long ahora) {
     case DEDO_PUESTO:
       if (valor < umbralSuelta) {
         e.estado = CONFIRMANDO_SUELTA; e.tEstado = ahora;
+        if (debugCuerda == (int8_t)c) {
+          Serial.print(F("DBG c")); Serial.print(c + 1);
+          Serial.print(F(" corte v=")); Serial.print(valor);
+          Serial.print(F(" @")); Serial.println(ahora);
+        }
       } else {
-        // Cambio de traste con antirrebote corto: un candidato debe
-        // sostenerse tTrasteMs antes de disparar la nota (descarta el
-        // transitorio brevísimo al levantar el dedo; los slides reales
-        // se demoran más y sí pasan).
+        // Cambio de traste:
+        //  - Adyacente (±1): commit INMEDIATO (firma de un slide; la
+        //    histéresis ya evita el baile en la frontera).
+        //  - Salto >=2: ventana tTrasteMs SIN reinicio. Arranca al
+        //    aparecer la desviación y al expirar compromete la zona MAS
+        //    RECIENTE, aunque el dedo siga en movimiento (tras un
+        //    microcorte del slide el dedo reaparece varios trastes más
+        //    allá y no debe esperar a frenarse). Se cancela solo si la
+        //    lectura vuelve al traste actual o se pierde el contacto
+        //    (la FSM sale de DEDO_PUESTO, y el transitorio de levantar
+        //    el dedo muere ahí: dura 1-2 ms, la ventana nunca expira).
         int8_t t = trasteConHisteresis(valor, e.traste);
+        if (debugCuerda == (int8_t)c && t != e.trastePend) {
+          // Primera muestra que cae en una zona nueva (se comprometa o no)
+          Serial.print(F("DBG c")); Serial.print(c + 1);
+          Serial.print(F(" zona ")); Serial.print(t + 1);
+          Serial.print(F(" v=")); Serial.print(valor);
+          Serial.print(F(" @")); Serial.println(ahora);
+        }
         if (t == e.traste) {
-          e.trastePend = t;                  // estable en el traste actual
-        } else if (t != e.trastePend) {
-          e.trastePend = t; e.tTraste = ahora;
-        } else if (ahora - e.tTraste >= tTrasteMs) {
-          e.traste = t;
-          Serial.print(F("Dedo -> traste "));
-          Serial.println(t + 1);
-          if (e.activa) cambiaNota(e, notaActual(c), canalActual(c));
+          e.trastePend = t;                  // meneo: cancela el cambio pendiente
+        } else {
+          if (e.trastePend == e.traste)      // aparece la desviación:
+            e.tTraste = ahora;               //   arranca la ventana (una vez)
+          e.trastePend = t;
+          int8_t salto = t - e.traste;
+          if (salto < 0) salto = -salto;
+          if (salto == 1 || ahora - e.tTraste >= tTrasteMs) {
+            e.traste = t;                    // adyacente: ya; salto: al expirar
+            e.trastePend = t;
+            if (e.activa) cambiaNota(e, notaActual(c), canalActual(c));
+          }
         }
       }
       break;
@@ -323,11 +409,16 @@ void procesaMastil(uint8_t c, unsigned long ahora) {
     case CONFIRMANDO_SUELTA:
       if (valor >= umbralSuelta) {
         e.estado = DEDO_PUESTO;              // volvió el contacto: no cortar
+        if (debugCuerda == (int8_t)c) {
+          Serial.print(F("DBG c")); Serial.print(c + 1);
+          Serial.print(F(" vuelve v=")); Serial.print(valor);
+          Serial.print(F(" corte_dur=")); Serial.print(ahora - e.tEstado);
+          Serial.print(F("ms @")); Serial.println(ahora);
+        }
       } else if (ahora - e.tEstado >= tSueltaMs) {
         e.estado = SIN_DEDO;
         e.traste = -1;
         e.trastePend = -1;
-        Serial.println(F("Dedo fuera"));
         if (e.activa) apagaCuerda(e);        // levantar el dedo apaga la nota
       }
       break;
@@ -341,10 +432,12 @@ void procesaMastil(uint8_t c, unsigned long ahora) {
       e.botonEstado = lecturaBoton;
       e.tBoton = 0;
       if (e.botonEstado) {
-        // Flanco de pisada: activa la cuerda y dispara la nota
-        // (con dedo = nota del traste; sin dedo = cuerda al aire)
+        // Flanco de pisada: arma la cuerda. Solo suena si hay dedo en
+        // el mástil (nota del traste); sin dedo queda armada en
+        // silencio y la nota saldrá cuando el dedo caiga en un traste
+        // (la rama del sensor ya dispara si e.activa).
         e.activa = true;
-        cambiaNota(e, notaActual(c), canalActual(c));
+        if (dedoPresente(e)) cambiaNota(e, notaActual(c), canalActual(c));
       }
       // Soltar el botón no hace nada: la nota sigue hasta que se
       // levante el dedo del sensor.
@@ -360,8 +453,7 @@ void procesaMastil(uint8_t c, unsigned long ahora) {
 int           joyCentroPitch = 512;
 int           joyCentroCC    = 512;
 int           joyUltimoBend  = 8192;
-uint8_t       joyCCActivo    = 0;     // 0 = ninguno
-uint8_t       joyUltimoValor = 0;
+uint8_t       joyUltimoRobot = 255;   // 255 = fuerza el primer envío
 unsigned long joyUltimoMs    = 0;
 
 void procesaJoystick(unsigned long ahora) {
@@ -386,33 +478,27 @@ void procesaJoystick(unsigned long ahora) {
     huboEnvio = true;
   }
 
-  // ---- Eje CC (A5) ----
+  // ---- Eje robot (A5) ----
+  // Un único CC bipolar con centro en 64 (limpio). Hacia un lado sube hacia
+  // 127 (frequency shifter), hacia el otro baja hacia 0 (bitcrusher),
+  // replicando el knob "robot" de la web. La zona muerta central = limpio.
   desv = analogRead(PIN_JOY_CC) - joyCentroCC;
-  uint8_t cc = 0;
-  int val = 0;
+  int robot = CC_ROBOT_CENTRO;
   if (desv > JOY_ZONA_MUERTA) {
-    cc  = CC_DIR_A;
-    val = (int)((long)(desv - JOY_ZONA_MUERTA) * 127
+    robot = CC_ROBOT_CENTRO + (int)((long)(desv - JOY_ZONA_MUERTA) * 63
                 / (1023 - joyCentroCC - JOY_ZONA_MUERTA));
   } else if (desv < -JOY_ZONA_MUERTA) {
-    cc  = CC_DIR_B;
-    val = (int)((long)(-desv - JOY_ZONA_MUERTA) * 127
+    robot = CC_ROBOT_CENTRO - (int)((long)(-desv - JOY_ZONA_MUERTA) * 64
                 / (joyCentroCC - JOY_ZONA_MUERTA));
   }
-  val = constrain(val, 0, 127);
-
-  if (cc != joyCCActivo) {
-    if (joyCCActivo != 0) { enviaCC(joyCCActivo, 0); huboEnvio = true; }
-    joyCCActivo    = cc;
-    joyUltimoValor = 255;  // fuerza el primer envío del nuevo CC
-  }
-  if (cc != 0 && (uint8_t)val != joyUltimoValor) {
-    enviaCC(cc, (uint8_t)val);
-    joyUltimoValor = (uint8_t)val;
+  robot = constrain(robot, 0, 127);
+  if ((uint8_t)robot != joyUltimoRobot) {
+    enviaCC(CC_ROBOT, (uint8_t)robot);
+    joyUltimoRobot = (uint8_t)robot;
     huboEnvio = true;
   }
 
-  if (huboEnvio) MidiUSB.flush();
+  if (huboEnvio) midiFlush();
 }
 
 // ============================================================
@@ -449,6 +535,10 @@ void ejecutarComando(char *s) {
   else if (!strcmp(cmd, "HIST")   && a1) margenHisteresis = atoi(a1);
   else if (!strcmp(cmd, "UMBRAL") && a1 && a2) {
     umbralPulsa = atoi(a1); umbralSuelta = atoi(a2);
+  }
+  else if (!strcmp(cmd, "DEBUG")  && a1) {
+    int n = atoi(a1);   // 1..NUM_CUERDAS = diagnosticar esa cuerda, 0 = off
+    debugCuerda = (n >= 1 && n <= (int)NUM_CUERDAS) ? (int8_t)(n - 1) : -1;
   }
   else if (!strcmp(cmd, "CALIBRAR")) { calibrarGuiado(); return; }
   else { Serial.println(F("? comando desconocido")); return; }
@@ -497,7 +587,7 @@ void setup() {
 
   delay(1500);
   Serial.println(F("Roboguitarra lista (modo normal, 17 trastes)"));
-  Serial.println(F("Comandos: SHOW, SUELTA/TRASTE/PULSA/BOTON <ms>, UMBRAL <p> <s>, HIST <n>, CALIBRAR"));
+  Serial.println(F("Comandos: SHOW, SUELTA/TRASTE/PULSA/BOTON <ms>, UMBRAL <p> <s>, HIST <n>, DEBUG <cuerda|0>, CALIBRAR"));
 }
 
 void loop() {
@@ -507,6 +597,17 @@ void loop() {
 
   procesaJoystick(ahora);
   procesaComandos();
+
+  // Frecuencia del bucle (solo en modo diagnóstico), una línea por segundo.
+  if (debugCuerda >= 0) {
+    static unsigned long tHz = 0;
+    static unsigned int  vueltas = 0;
+    vueltas++;
+    if (ahora - tHz >= 1000) {
+      Serial.print(F("DBG hz=")); Serial.println(vueltas);
+      vueltas = 0; tHz = ahora;
+    }
+  }
   // Sin delay: el mástil se muestrea lo más rápido posible para captar
   // el deslizamiento. Los antirrebotes van por tiempo (millis) y el
   // joystick se autolimita a JOY_INTERVALO_MS.

@@ -38,6 +38,14 @@ DEFAULT_GAIN = float(os.environ.get("ROBOGUITARRA_GAIN", "0.5"))
 # o el hardware roboguitarra con `aconnect`.
 MIDI_DRIVER = os.environ.get("ROBOGUITARRA_MIDI_DRIVER", "alsa_seq")
 
+# Nº de canales MIDI que comparten instrumento (roboguitarra emite en 0..N-1).
+MIDI_CHANNELS = int(os.environ.get("ROBOGUITARRA_MIDI_CHANNELS", "4"))
+
+# CC del joystick (eje A5) que controla el efecto robot (bipolar, centro 64 =
+# limpio). El servidor lo intercepta y lo mapea a set_robot(); no llega a
+# FluidSynth. Debe coincidir con CC_ROBOT del firmware.
+ROBOT_CC = int(os.environ.get("ROBOGUITARRA_ROBOT_CC", "20"))
+
 # --- Servidor web ---
 HOST = os.environ.get("ROBOGUITARRA_HOST", "0.0.0.0")
 PORT = int(os.environ.get("ROBOGUITARRA_PORT", "5000"))

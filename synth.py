@@ -14,6 +14,9 @@ import fluidsynth
 
 import config
 
+# Tipo de evento MIDI Control Change (nibble alto del byte de estado).
+_MIDI_CONTROL_CHANGE = 0xB0
+
 
 class SynthEngine:
     def __init__(self):
@@ -81,8 +84,12 @@ class SynthEngine:
                     self.fs.setting("audio.alsa.device", config.ALSA_DEVICE)
                 # Cargar el efecto LADSPA antes de arrancar el driver de audio.
                 self._load_ladspa()
+                # midi_router = callback propio: intercepta el CC del joystick
+                # que controla el efecto robot y reenvía el resto a FluidSynth.
                 self.fs.start(
-                    driver=config.AUDIO_DRIVER, midi_driver=config.MIDI_DRIVER
+                    driver=config.AUDIO_DRIVER,
+                    midi_driver=config.MIDI_DRIVER,
+                    midi_router=self._midi_router,
                 )
                 self._apply_reverb()
                 self._apply_chorus()
@@ -100,6 +107,15 @@ class SynthEngine:
             raise RuntimeError(self.error or "El motor de audio no está iniciado")
 
     # ------------------------------------------------------------- soundfonts
+    def _program_all(self, bank, preset):
+        """Asigna el mismo bank/preset a los canales 0..MIDI_CHANNELS-1.
+
+        El hardware roboguitarra emite note-in por varios canales; así todos
+        suenan con el instrumento elegido, no con el preset por defecto.
+        """
+        for ch in range(config.MIDI_CHANNELS):
+            self.fs.program_select(ch, self.current_sfid, bank, preset)
+
     def load_soundfont(self, path, filename):
         with self._lock:
             self._ensure()
@@ -114,8 +130,8 @@ class SynthEngine:
                 raise RuntimeError(f"No se pudo cargar el SoundFont: {filename}")
             self.current_sfid = sfid
             self.current_sf2 = filename
-            # Selecciona el primer instrumento por defecto
-            self.fs.program_select(0, sfid, 0, 0)
+            # Selecciona el primer instrumento por defecto en todos los canales.
+            self._program_all(0, 0)
             self.current_instrument = {"bank": 0, "preset": 0, "channel": 0}
             self._apply_sends()  # el cambio de programa puede resetear los CC
             self._save_session()
@@ -126,7 +142,9 @@ class SynthEngine:
             self._ensure()
             if self.current_sfid is None:
                 raise RuntimeError("Carga primero un SoundFont")
-            self.fs.program_select(channel, self.current_sfid, bank, preset)
+            # El mismo instrumento suena en los canales 0..MIDI_CHANNELS-1, así
+            # que el hardware roboguitarra suena igual venga por el canal que venga.
+            self._program_all(bank, preset)
             self.current_instrument = {
                 "bank": bank,
                 "preset": preset,
@@ -272,6 +290,30 @@ class SynthEngine:
             self.params["robot"] = max(-1.0, min(1.0, float(t)))
             if self.shifter:
                 self.shifter.set_robot(self.params["robot"])
+
+    def _midi_router(self, data, event):
+        """Router MIDI custom (se ejecuta en el hilo del driver MIDI).
+
+        Intercepta el CC del joystick que controla el efecto robot para
+        replicar el knob bipolar de la web, y reenvía todo lo demás (notas,
+        pitch bend, otros CC) a FluidSynth sin cambios. Debe devolver
+        FLUID_OK (0).
+        """
+        try:
+            if fluidsynth.fluid_midi_event_get_type(event) == _MIDI_CONTROL_CHANGE:
+                if fluidsynth.fluid_midi_event_get_control(event) == config.ROBOT_CC:
+                    val = fluidsynth.fluid_midi_event_get_value(event)
+                    # CC 0..127 con centro 64 -> t bipolar [-1, 1] (igual que
+                    # el knob de la web). El firmware lo manda en varios canales,
+                    # así que evitamos recalcular si no cambia.
+                    t = max(-1.0, min(1.0, (val - 64) / 63.0))
+                    if t != self.params["robot"]:
+                        self.set_robot(t)
+                    return 0  # FLUID_OK; no reenviar a FluidSynth
+        except Exception:  # noqa: BLE001
+            pass  # nunca romper el flujo MIDI por un fallo aquí
+        # Resto de eventos: comportamiento por defecto de FluidSynth.
+        return fluidsynth.fluid_synth_handle_midi_event(self.fs.synth, event)
 
     def set_pitch_bend(self, value):
         """Pitch bend MIDI (0..16383, centro 8192). Afecta a todos los canales.
