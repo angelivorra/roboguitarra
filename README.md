@@ -56,7 +56,9 @@ python3 -m venv .venv
 ./.venv/bin/python app.py
 ```
 
-Abre `http://<IP-de-la-Pi>:5000` desde el móvil (misma red Wi-Fi).
+Abre `http://<IP-de-la-Pi>:8080` desde el móvil (misma red Wi-Fi; el puerto lo
+fija `ROBOGUITARRA_PORT` en `roboguitarra.service` — en desarrollo local el
+valor por defecto es 5000).
 
 ## SoundFonts
 
@@ -111,6 +113,7 @@ sudo systemctl enable --now roboguitarra
 
 | Método | Ruta                     | Descripción                                  |
 |--------|--------------------------|----------------------------------------------|
+| GET    | `/api/health`            | 200 si el motor de audio está OK, 503 si no  |
 | GET    | `/api/soundfonts`        | Lista de `.sf2` en la carpeta                |
 | POST   | `/api/soundfont/load`    | `{filename}` carga el sf2 y devuelve presets |
 | GET    | `/api/instruments`       | Instrumentos del sf2 cargado                 |

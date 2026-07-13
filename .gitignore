@@ -10,6 +10,9 @@ soundfonts/*.SF2
 # sesión guardada (último sf2/instrumento)
 last_session.json
 
+# wheels descargados por deploy.sh para instalar offline en la Pi
+.deploy-wheels/
+
 # grabaciones
 *.wav
 

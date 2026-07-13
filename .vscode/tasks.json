@@ -18,6 +18,30 @@
       "presentation": { "reveal": "always", "panel": "dedicated" },
       "group": { "kind": "build", "isDefault": true },
       "detail": "Crea el entorno si no existe y arranca el servidor en http://localhost:5000"
+    },
+    {
+      "label": "Pi: Actualizar panel de control",
+      "type": "shell",
+      "command": "./deploy.sh panel",
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "detail": "rsync del código a patch@192.168.0.20, instala dependencias y reinicia el servicio roboguitarra."
+    },
+    {
+      "label": "Pi: Copiar soundfonts (.sf2)",
+      "type": "shell",
+      "command": "./deploy.sh sf2",
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "detail": "rsync incremental de soundfonts/ a la Pi (no borra los sf2 que solo estén allí)."
+    },
+    {
+      "label": "Pi: Desplegar todo",
+      "type": "shell",
+      "command": "./deploy.sh all",
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "detail": "Actualiza el panel de control y copia los soundfonts a la Pi."
     }
   ]
 }

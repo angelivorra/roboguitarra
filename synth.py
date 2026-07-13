@@ -82,6 +82,10 @@ class SynthEngine:
                 self.fs.setting("synth.polyphony", config.POLYPHONY)
                 if config.ALSA_DEVICE:
                     self.fs.setting("audio.alsa.device", config.ALSA_DEVICE)
+                if config.AUDIO_DRIVER == "jack":
+                    # Conecta los puertos a system:playback sin depender de
+                    # un gestor de conexiones externo (Patchbox OS).
+                    self.fs.setting("audio.jack.autoconnect", 1)
                 # Cargar el efecto LADSPA antes de arrancar el driver de audio.
                 self._load_ladspa()
                 # midi_router = callback propio: intercepta el CC del joystick

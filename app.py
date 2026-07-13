@@ -3,6 +3,9 @@
 Sirve la interfaz web móvil y expone una API REST para controlar el motor
 FluidSynth (cargar SoundFonts, elegir instrumento, modular y tocar notas).
 """
+import socket
+import time
+
 from flask import Flask, jsonify, render_template, request
 
 import config
@@ -14,8 +17,30 @@ app = Flask(__name__)
 
 
 @app.route("/")
+@app.route("/robot")
 def index():
+    # /robot es la ruta que abre el panel central (lgptclient) al pulsar
+    # sobre el dispositivo en su pantalla de inicio.
     return render_template("index.html")
+
+
+@app.get("/api/health")
+def api_health():
+    """Health check: 200 si el motor de audio está arrancado, 503 si no.
+
+    Mismo formato que el /api/health de lgptclient (status/name/timestamp),
+    más el estado del motor FluidSynth.
+    """
+    ok = engine.started and engine.error is None
+    body = {
+        "status": "ok" if ok else "error",
+        "name": socket.gethostname(),
+        "timestamp": time.time(),
+        "engine_started": engine.started,
+        "error": engine.error,
+        "soundfont": engine.current_sf2,
+    }
+    return jsonify(body), (200 if ok else 503)
 
 
 # --------------------------------------------------------------- soundfonts

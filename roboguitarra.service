@@ -8,16 +8,23 @@
 # Ajusta User, WorkingDirectory y las variables de entorno a tu equipo.
 [Unit]
 Description=Roboguitarra - sintetizador SoundFont web (FluidSynth)
-After=sound.target network.target
+After=sound.target network.target jack.service
+Wants=jack.service
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/home/pi/roboguitarra
-Environment=ROBOGUITARRA_AUDIO_DRIVER=alsa
-# Descomenta y ajusta al dispositivo del HAT (ver `aplay -l`)
-# Environment=ROBOGUITARRA_ALSA_DEVICE=hw:0
-ExecStart=/home/pi/roboguitarra/.venv/bin/python /home/pi/roboguitarra/app.py
+User=patch
+WorkingDirectory=/home/patch/roboguitarra
+# La Pi corre Patchbox OS: jackd (jack.service) tiene el DAC+ en exclusiva,
+# así que FluidSynth debe salir por JACK, no abrir ALSA directamente.
+Environment=ROBOGUITARRA_AUDIO_DRIVER=jack
+# jackd corre en modo promiscuo (ver jack.service); sin esta variable los
+# clientes de otros usuarios no encuentran su socket.
+Environment=JACK_PROMISCUOUS_SERVER=jack
+Environment=ROBOGUITARRA_PORT=8080
+# Solo con driver alsa: dispositivo del HAT (ver `aplay -l`)
+# Environment=ROBOGUITARRA_ALSA_DEVICE=hw:DAC
+ExecStart=/home/patch/roboguitarra/.venv/bin/python /home/patch/roboguitarra/app.py
 Restart=on-failure
 
 [Install]

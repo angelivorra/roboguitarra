@@ -16,7 +16,7 @@ def list_soundfonts():
     if not folder.exists():
         return []
     items = []
-    for path in sorted(folder.glob("*.sf2")):
+    for path in sorted(p for p in folder.iterdir() if p.suffix.lower() == ".sf2"):
         items.append(
             {
                 "filename": path.name,
