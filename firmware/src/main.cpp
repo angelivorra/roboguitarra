@@ -23,8 +23,8 @@
 // Cuerda 1 = 1ª de guitarra (Mi agudo), 2 = 2ª (Si), 3 = 3ª (Sol).
 const uint8_t NUM_CUERDAS = 3;
 const uint8_t NUM_TRASTES = 17;
-const uint8_t PIN_SENSOR[NUM_CUERDAS] = { A1, A0, A2 };
-const uint8_t PIN_BOTON[NUM_CUERDAS]  = { 3, 4, 5 };  // arcade a GND, INPUT_PULLUP
+const uint8_t PIN_SENSOR[NUM_CUERDAS] = { A1, A2, A3 };
+const uint8_t PIN_BOTON[NUM_CUERDAS]  = { 5, 4, 3 };  // arcade a GND, INPUT_PULLUP
 
 // Joystick analógico (global, no por cuerda)
 const uint8_t PIN_JOY_PITCH = A4;  // eje pitch bend
