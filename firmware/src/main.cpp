@@ -27,9 +27,9 @@ const uint8_t PIN_SENSOR[NUM_CUERDAS] = { A1, A2, A3 };
 const uint8_t PIN_BOTON[NUM_CUERDAS]  = { 5, 4, 3 };  // arcade a GND, INPUT_PULLUP
 
 // Joystick analógico (global, no por cuerda)
-const uint8_t PIN_JOY_PITCH = A4;  // eje pitch bend
-const uint8_t PIN_JOY_CC    = A5;  // eje CC (reverb / chorus)
-const uint8_t PIN_JOY_BTN   = 6;   // pulsador del stick (sin función aún)
+const uint8_t PIN_JOY_MOD     = A4;  // eje de modulación (antes pitch bend)
+const uint8_t PIN_JOY_TRIGGER = A5;  // eje de disparo de nota (antes CC robot)
+const uint8_t PIN_JOY_BTN     = 6;   // pulsador del stick (sin función aún)
 
 // Nota MIDI de cada cuerda al aire: 1ª = Mi4 (64), 2ª = Si3 (59), 3ª = Sol3 (55).
 const uint8_t NOTA_AIRE[NUM_CUERDAS] = { 64, 59, 55 };
@@ -38,16 +38,16 @@ const uint8_t VELOCIDAD  = 100;
 
 // Canales MIDI (0..15 en el byte de estado = canales 1..16).
 // UN CANAL POR CUERDA: la cuerda c emite en CANALES[c]. Así cada
-// cuerda es independiente (su propio pitch bend, sus notas) y dos
-// cuerdas pueden tocar la misma nota sin que el Note Off de una apague
-// la de la otra. El bend y los CC del joystick se reemiten en TODOS
-// estos canales. Ninguno es el 9 (percusión en General MIDI).
+// cuerda es independiente (sus propias notas) y dos cuerdas pueden
+// tocar la misma nota sin que el Note Off de una apague la de la otra.
+// El CC de modulación del joystick se reemite en TODOS estos canales.
+// Ninguno es el 9 (percusión en General MIDI).
 // Debe haber al menos un canal por cuerda (NUM_CANALES >= NUM_CUERDAS).
 const uint8_t CANALES[]    = { 0, 1, 2 };   // cuerda 1->canal 1, 2->2, 3->3
 const uint8_t NUM_CANALES  = sizeof(CANALES) / sizeof(CANALES[0]);
 
-// CC del eje A5: controla el efecto robot, bipolar con centro en 64 (limpio).
-// Igual que el knob "robot" de la web: un lado = frequency shifter, el otro =
+// CC del eje A4: controla el efecto robot, bipolar con centro en 64 (limpio).
+// Igual que el knob "robot" de la web: un lado = phaser agresivo, el otro =
 // bitcrusher. El servidor lo intercepta y lo mapea a set_robot(); FluidSynth no
 // lo consume. Debe coincidir con ROBOT_CC en config.py. CC 20 no se usa en GM.
 const uint8_t CC_ROBOT = 20;
@@ -56,6 +56,12 @@ const uint8_t CC_ROBOT_CENTRO = 64;  // valor "limpio" (centro del joystick)
 // Joystick: zona muerta (cuentas ADC) y cadencia de envío.
 const int          JOY_ZONA_MUERTA  = 40;
 const unsigned long JOY_INTERVALO_MS = 5;
+
+// Cuentas ADC (más allá de la zona muerta) necesarias para llegar a CC 0/127
+// en el eje de modulación. Un valor bajo = más sensible (llega a fondo con
+// menos recorrido físico); si un lado del stick se queda corto, bajar esto
+// en vez de asumir que el joystick llega a los extremos teóricos del ADC.
+const int JOY_MOD_RANGO = 300;
 
 // Tabla de calibración POR DEFECTO (fallback si la EEPROM no es válida).
 // Lectura ADC en el centro de cada traste. Común a todas las cuerdas.
@@ -222,15 +228,6 @@ void notaOn(uint8_t nota, uint8_t canal) {
 void notaOff(uint8_t nota, uint8_t canal) {
   midiEventPacket_t ev = { 0x08, (uint8_t)(0x80 | canal), nota, 0 };
   midiEnvia(ev);
-}
-
-// Pitch bend en todos los canales de cuerda (14 bits: 0..16383, centro 8192).
-void enviaBend(int v) {
-  for (uint8_t i = 0; i < NUM_CANALES; i++) {
-    midiEventPacket_t ev = { 0x0E, (uint8_t)(0xE0 | CANALES[i]),
-                             (uint8_t)(v & 0x7F), (uint8_t)((v >> 7) & 0x7F) };
-    midiEnvia(ev);
-  }
 }
 
 // Control Change en todos los canales de cuerda.
@@ -424,23 +421,16 @@ void procesaMastil(uint8_t c, unsigned long ahora) {
       break;
   }
 
-  // ---- Botón arcade: disparar la cuerda ----
+  // ---- Botón arcade: por ahora no dispara nada. Las cuerdas se activan
+  // con el gesto de disparo del joystick (ver procesaJoystick/disparaCuerdas),
+  // que solo afecta a las cuerdas con dedo puesto. Se deja el antirrebote
+  // leyendo el estado del botón para cuando se decida qué función darle.
   bool lecturaBoton = (digitalRead(PIN_BOTON[c]) == LOW);
   if (lecturaBoton != e.botonEstado) {
     if (e.tBoton == 0) e.tBoton = ahora;
     if (ahora - e.tBoton >= tBotonMs) {
       e.botonEstado = lecturaBoton;
       e.tBoton = 0;
-      if (e.botonEstado) {
-        // Flanco de pisada: arma la cuerda. Solo suena si hay dedo en
-        // el mástil (nota del traste); sin dedo queda armada en
-        // silencio y la nota saldrá cuando el dedo caiga en un traste
-        // (la rama del sensor ya dispara si e.activa).
-        e.activa = true;
-        if (dedoPresente(e)) cambiaNota(e, notaActual(c), canalActual(c));
-      }
-      // Soltar el botón no hace nada: la nota sigue hasta que se
-      // levante el dedo del sensor.
     }
   } else {
     e.tBoton = 0;
@@ -448,48 +438,48 @@ void procesaMastil(uint8_t c, unsigned long ahora) {
 }
 
 // ============================================================
-//  Joystick: pitch bend (A4) + CC (A5)
+//  Joystick: modulación (A4) + disparo de nota (A5)
 // ============================================================
-int           joyCentroPitch = 512;
-int           joyCentroCC    = 512;
-int           joyUltimoBend  = 8192;
-uint8_t       joyUltimoRobot = 255;   // 255 = fuerza el primer envío
-unsigned long joyUltimoMs    = 0;
+int           joyCentroMod     = 512;
+int           joyCentroTrigger = 512;
+uint8_t       joyUltimoRobot   = 255;   // 255 = fuerza el primer envío
+bool          joyFueraDeCentro = false; // eje de disparo, para detectar el flanco
+unsigned long joyUltimoMs      = 0;
+
+// Dispara (Note On) las cuerdas que tienen dedo puesto en el mástil.
+// Las que están al aire (sin dedo) no suenan con el gesto del joystick.
+void disparaCuerdas() {
+  for (uint8_t c = 0; c < NUM_CUERDAS; c++) {
+    EstadoCuerda &e = cuerda[c];
+    if (dedoPresente(e)) {
+      e.activa = true;
+      cambiaNota(e, notaActual(c), canalActual(c));
+    }
+  }
+}
 
 void procesaJoystick(unsigned long ahora) {
   if (ahora - joyUltimoMs < JOY_INTERVALO_MS) return;
   joyUltimoMs = ahora;
   bool huboEnvio = false;
 
-  // ---- Eje pitch (A4) ----
-  int desv = analogRead(PIN_JOY_PITCH) - joyCentroPitch;
-  int bend = 8192;
-  if (desv > JOY_ZONA_MUERTA) {
-    bend = 8192 + (int)((long)(desv - JOY_ZONA_MUERTA) * 8191
-                        / (1023 - joyCentroPitch - JOY_ZONA_MUERTA));
-  } else if (desv < -JOY_ZONA_MUERTA) {
-    bend = 8192 - (int)((long)(-desv - JOY_ZONA_MUERTA) * 8192
-                        / (joyCentroPitch - JOY_ZONA_MUERTA));
-  }
-  bend = constrain(bend, 0, 16383);
-  if (bend != joyUltimoBend) {
-    enviaBend(bend);
-    joyUltimoBend = bend;
-    huboEnvio = true;
-  }
-
-  // ---- Eje robot (A5) ----
+  // ---- Eje modulación (A4, antes pitch bend) ----
   // Un único CC bipolar con centro en 64 (limpio). Hacia un lado sube hacia
-  // 127 (frequency shifter), hacia el otro baja hacia 0 (bitcrusher),
+  // 127 (phaser), hacia el otro baja hacia 0 (bitcrusher),
   // replicando el knob "robot" de la web. La zona muerta central = limpio.
-  desv = analogRead(PIN_JOY_CC) - joyCentroCC;
+  // OJO: el recorrido objetivo (JOY_MOD_RANGO) es el MISMO fijo en las dos
+  // direcciones, en vez de "lo que falta hasta 0/1023 en teoría" (como antes):
+  // un joystick barato casi nunca tiene el mismo recorrido mecánico en las
+  // dos direcciones, así que ese cálculo dejaba un lado con mucho menos CC
+  // disponible (apenas se movía de 64). constrain() satura si no llega.
+  int desv = analogRead(PIN_JOY_MOD) - joyCentroMod;
   int robot = CC_ROBOT_CENTRO;
   if (desv > JOY_ZONA_MUERTA) {
     robot = CC_ROBOT_CENTRO + (int)((long)(desv - JOY_ZONA_MUERTA) * 63
-                / (1023 - joyCentroCC - JOY_ZONA_MUERTA));
+                / JOY_MOD_RANGO);
   } else if (desv < -JOY_ZONA_MUERTA) {
     robot = CC_ROBOT_CENTRO - (int)((long)(-desv - JOY_ZONA_MUERTA) * 64
-                / (joyCentroCC - JOY_ZONA_MUERTA));
+                / JOY_MOD_RANGO);
   }
   robot = constrain(robot, 0, 127);
   if ((uint8_t)robot != joyUltimoRobot) {
@@ -497,6 +487,15 @@ void procesaJoystick(unsigned long ahora) {
     joyUltimoRobot = (uint8_t)robot;
     huboEnvio = true;
   }
+
+  // ---- Eje disparo (A5, antes CC robot) ----
+  // El "rasgueo": salir de la zona muerta hacia cualquier lado dispara las
+  // cuerdas con dedo puesto (flanco, no nivel). Volver al centro rearma el
+  // disparo para el siguiente toque, en cualquiera de las dos direcciones.
+  desv = analogRead(PIN_JOY_TRIGGER) - joyCentroTrigger;
+  bool fueraDeCentro = (desv > JOY_ZONA_MUERTA) || (desv < -JOY_ZONA_MUERTA);
+  if (fueraDeCentro && !joyFueraDeCentro) disparaCuerdas();
+  joyFueraDeCentro = fueraDeCentro;
 
   if (huboEnvio) midiFlush();
 }
@@ -578,12 +577,12 @@ void setup() {
   // Centro real del joystick: promedio con el stick en reposo.
   long s1 = 0, s2 = 0;
   for (uint8_t i = 0; i < 16; i++) {
-    s1 += analogRead(PIN_JOY_PITCH);
-    s2 += analogRead(PIN_JOY_CC);
+    s1 += analogRead(PIN_JOY_MOD);
+    s2 += analogRead(PIN_JOY_TRIGGER);
     delay(5);
   }
-  joyCentroPitch = (int)(s1 / 16);
-  joyCentroCC    = (int)(s2 / 16);
+  joyCentroMod     = (int)(s1 / 16);
+  joyCentroTrigger = (int)(s2 / 16);
 
   delay(1500);
   Serial.println(F("Roboguitarra lista (modo normal, 17 trastes)"));

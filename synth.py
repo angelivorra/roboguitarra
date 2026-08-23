@@ -38,10 +38,10 @@ class SynthEngine:
             # no estos parámetros internos.
             "reverb": {
                 "on": True,
-                "roomsize": 0.7,
-                "damping": 0.3,
-                "width": 0.8,
-                "level": 0.9,
+                "roomsize": 0.4,
+                "damping": 0.5,
+                "width": 0.6,
+                "level": 0.5,
             },
             "chorus": {
                 "on": True,
@@ -52,13 +52,13 @@ class SynthEngine:
                 "type": 0,  # 0 = seno, 1 = triángulo
             },
             # Envíos por canal (CC91 reverb, CC93 chorus), 0..127
-            "reverb_send": 40,
-            "chorus_send": 20,
+            "reverb_send": 20,
+            "chorus_send": 15,
             # Pitch bend MIDI: 0..16383, centro 8192 = sin bend (transitorio,
             # no se guarda en la sesión; arranca centrado).
             "pitch": 8192,
             # Efecto robótico LADSPA, knob bipolar [-1, 1]: 0 = limpio,
-            # >0 = frequency shifter (metálico), <0 = bitcrusher (8 bits).
+            # >0 = phaser + bits muy reducidos, <0 = bitcrusher (bits+sr).
             "robot": 0.0,
         }
         self.shifter = None
@@ -273,8 +273,9 @@ class SynthEngine:
             self.fs.cc(ch, 93, int(self.params["chorus_send"]))
 
     def _load_ladspa(self):
-        """Carga el frequency shifter LADSPA (efecto robótico). Si falla, se
-        ignora: el resto del motor sigue funcionando sin el efecto."""
+        """Carga la cadena LADSPA del efecto robótico (phaser + crush +
+        bitcrusher). Si falla, se ignora: el resto del motor sigue
+        funcionando sin el efecto."""
         try:
             from ladspa import RobotFx
 

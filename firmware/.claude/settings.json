@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(lsusb)",
+      "Bash(aconnect 28:0 128:0)",
+      "Bash(python3 -m py_compile ladspa.py synth.py)",
+      "Bash(pactl list *)",
+      "Bash(ping -c 4 -W 2 192.168.0.20)",
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(curl -s http://127.0.0.1:5000/api/midi)",
+      "Bash(curl -s -X POST http://127.0.0.1:5000/api/midi/connect -H \"Content-Type: application/json\" -d '{\"key\":\"Roboguitarra/Roboguitarra MIDI 1\"}')",
+      "Bash(ping -c 2 -W 2 192.168.0.20)",
+      "Bash(ssh patch@192.168.0.20 \"dpkg -s swh-plugins 2>&1 | head -5; echo '---ladspa dir---'; ls /usr/lib/ladspa/ 2>&1 | grep -E 'ringmod|decimator|foldover|phasers|sinus_wave|amp_1181' ; echo '---internet---'; getent hosts deb.debian.org && echo 'tiene internet' || echo 'sin internet'\")",
+      "Bash(curl -s -m 3 -o /dev/null -w \"%{http_code}\\\\n\" https://pypi.org)",
+      "Bash(ssh patch@192.168.0.20 \"systemctl is-active roboguitarra 2>&1; ls -la /home/patch/roboguitarra/ 2>&1 | head -20\")",
+      "Bash(./deploy.sh all *)",
+      "Bash(scp /home/angel/git/roboguitarra/last_session.json patch@192.168.0.20:/home/patch/roboguitarra/last_session.json)",
+      "Bash(ssh patch@192.168.0.20 \"cat /home/patch/roboguitarra/last_session.json\")",
+      "Bash(ssh patch@192.168.0.20 \"sudo systemctl restart roboguitarra && sleep 3 && systemctl status roboguitarra --no-pager | head -8\")",
+      "Bash(ssh patch@192.168.0.20 \"curl -s http://127.0.0.1:5000/api/params\")",
+      "Bash(ssh patch@192.168.0.20 \"curl -s -w '\\\\nHTTP:%{http_code}\\\\n' http://127.0.0.1:5000/api/params\")",
+      "Bash(ssh patch@192.168.0.20 \"sudo journalctl -u roboguitarra --no-pager -n 40\")",
+      "Bash(ssh patch@192.168.0.20 \"ss -tlnp 2>/dev/null | grep -i python; echo '---service file---'; cat /etc/systemd/system/roboguitarra.service\")",
+      "Bash(ssh patch@192.168.0.20 \"curl -s http://127.0.0.1:8080/api/params\")",
+      "Bash(ssh patch@192.168.0.20 \"aconnect -l 2>/dev/null | grep -B1 -A2 -i roboguitarra || echo '\\(Roboguitarra no detectada — el hardware no está conectado a la Pi ahora\\)'\")",
+      "Bash(ssh patch@192.168.0.20 \"systemctl is-active jack.service 2>&1\")",
+      "Bash(ssh patch@192.168.0.20 \"curl -s http://127.0.0.1:8080/api/health\")"
+    ]
+  }
+}

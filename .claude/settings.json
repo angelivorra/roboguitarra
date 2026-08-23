@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pw-cli list-objects *)",
+      "Bash(pactl list *)",
+      "Bash(ffmpeg -i /home/angel/git/roboguitarra/demo_roboguitarra.wav -af \"astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level\" -f null -)",
+      "Bash(curl -s -X POST http://localhost:5000/api/soundfont/load -H 'Content-Type: application/json' -d '{\"filename\":\"Nylon Guitar.sf2\"}')",
+      "Bash(xargs -r kill)",
+      "Bash(fuser 5000/tcp)"
+    ]
+  }
+}
