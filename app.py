@@ -14,6 +14,7 @@ import soundfonts
 from synth import engine
 
 app = Flask(__name__)
+app.config["TEMPLATES_AUTO_RELOAD"] = True
 
 
 @app.route("/")
@@ -43,10 +44,106 @@ def api_health():
     return jsonify(body), (200 if ok else 503)
 
 
+# --------------------------------------------------------------- presets
+@app.get("/api/presets")
+def api_presets():
+    import presets as preset_catalog
+
+    state = engine.get_state()
+    current = state.get("preset_index") or 0
+    items = []
+    for i, item in enumerate(preset_catalog.CATALOG):
+        items.append(
+            {
+                "index": i,
+                "name": item["name"],
+                "filename": item["filename"],
+                "bank": item["bank"],
+                "preset": item["preset"],
+                "effect_up": engine.effects_for_index(i)["up"],
+                "effect_down": engine.effects_for_index(i)["down"],
+                "active": i == current,
+            }
+        )
+    return jsonify({"presets": items, "index": current})
+
+
+@app.get("/api/effects")
+def api_effects():
+    import effects as fxcat
+
+    state = engine.get_state()
+    p = state.get("params") or {}
+    return jsonify(
+        {
+            "effects": fxcat.list_effects(),
+            "delays": fxcat.list_delays(),
+            "up": p.get("effect_up"),
+            "down": p.get("effect_down"),
+            "delay": p.get("delay_kind") or "none",
+        }
+    )
+
+
+@app.post("/api/effect")
+def api_effect_set():
+    data = request.get_json(force=True)
+    effect_id = data.get("id") or data.get("effect")
+    side = data.get("side") or "up"
+    if not effect_id:
+        return jsonify({"error": "Falta 'id'"}), 400
+    try:
+        engine.set_effect(effect_id, side=side)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": str(exc)}), 500
+    return jsonify(engine.get_state())
+
+
+@app.post("/api/effect/default")
+def api_effect_default():
+    """Guarda efectos, gain y sala del preset activo."""
+    try:
+        engine.save_effect_default()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": str(exc)}), 500
+    return jsonify(engine.get_state())
+
+
+@app.post("/api/presets/select")
+def api_preset_select():
+    data = request.get_json(force=True)
+    try:
+        engine.select_preset(int(data["index"]))
+    except (KeyError, TypeError, ValueError):
+        return jsonify({"error": "Se requiere 'index'"}), 400
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": str(exc)}), 500
+    return jsonify(engine.get_state())
+
+
+@app.post("/api/presets/step")
+def api_preset_step():
+    data = request.get_json(silent=True) or {}
+    try:
+        engine.step_preset(int(data.get("delta", 1)))
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": str(exc)}), 500
+    return jsonify(engine.get_state())
+
+
 # --------------------------------------------------------------- soundfonts
 @app.get("/api/soundfonts")
 def api_soundfonts():
-    return jsonify(soundfonts.list_soundfonts())
+    import presets as preset_catalog
+
+    keep = {n.lower() for n in preset_catalog.catalog_filenames()}
+    return jsonify(
+        [sf for sf in soundfonts.list_soundfonts() if sf["filename"].lower() in keep]
+    )
 
 
 @app.post("/api/soundfont/load")
@@ -55,23 +152,34 @@ def api_soundfont_load():
     filename = data.get("filename")
     if not filename:
         return jsonify({"error": "Falta 'filename'"}), 400
-    try:
-        path = soundfonts.resolve_soundfont(filename)
-        engine.load_soundfont(path, filename)
-        instruments = soundfonts.list_instruments(path)
-    except FileNotFoundError as exc:
-        return jsonify({"error": str(exc)}), 404
-    except Exception as exc:  # noqa: BLE001
-        return jsonify({"error": str(exc)}), 500
-    return jsonify({"soundfont": filename, "instruments": instruments})
+    import presets as preset_catalog
+
+    for i, item in enumerate(preset_catalog.CATALOG):
+        if item["filename"] == filename:
+            try:
+                engine.select_preset(i)
+            except Exception as exc:  # noqa: BLE001
+                return jsonify({"error": str(exc)}), 500
+            return jsonify(engine.get_state())
+    return jsonify({"error": "Ese SoundFont no está en el catálogo"}), 404
 
 
 @app.get("/api/instruments")
 def api_instruments():
-    if not engine.current_sf2:
-        return jsonify([])
-    path = soundfonts.resolve_soundfont(engine.current_sf2)
-    return jsonify(soundfonts.list_instruments(path))
+    import presets as preset_catalog
+
+    return jsonify(
+        [
+            {
+                "index": i,
+                "name": item["name"],
+                "filename": item["filename"],
+                "bank": item["bank"],
+                "preset": item["preset"],
+            }
+            for i, item in enumerate(preset_catalog.CATALOG)
+        ]
+    )
 
 
 @app.post("/api/instrument")
@@ -93,7 +201,14 @@ def api_instrument():
 # --------------------------------------------------------------- parámetros
 @app.get("/api/params")
 def api_get_params():
-    return jsonify(engine.get_state())
+    import tcp_bpm
+
+    state = engine.get_state()
+    snap = tcp_bpm.current_state()
+    state["bpm"] = engine.bpm if engine.bpm is not None else snap.get("bpm")
+    state["tcp_connected"] = snap.get("tcp_connected", False)
+    state["playing"] = snap.get("playing", False)
+    return jsonify(state)
 
 
 @app.post("/api/params")
@@ -110,10 +225,18 @@ def api_set_params():
             engine.set_sends(
                 reverb=data.get("reverb_send"), chorus=data.get("chorus_send")
             )
+        if "space_on" in data:
+            engine.set_space_on(data["space_on"])
         if "pitch" in data:
             engine.set_pitch_bend(data["pitch"])
         if "robot" in data:
             engine.set_robot(data["robot"])
+        if "effect_up" in data:
+            engine.set_effect(data["effect_up"], side="up")
+        if "effect_down" in data:
+            engine.set_effect(data["effect_down"], side="down")
+        if "delay_kind" in data:
+            engine.set_delay_kind(data["delay_kind"])
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": str(exc)}), 500
     return jsonify(engine.get_state())
@@ -197,6 +320,13 @@ def api_panic():
 
 
 def main():
+    import tcp_bpm
+
+    def _on_bpm(bpm):
+        snap = tcp_bpm.current_state()
+        engine.set_bpm(bpm, connected=snap.get("tcp_connected"))
+
+    tcp_bpm.start_tcp_client(on_bpm=_on_bpm)
     # Intenta arrancar el motor al inicio (no bloquea si falla)
     engine.start()
     # Restaura el último sf2 e instrumento usados, si los hay

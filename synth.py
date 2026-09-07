@@ -14,8 +14,9 @@ import fluidsynth
 
 import config
 
-# Tipo de evento MIDI Control Change (nibble alto del byte de estado).
+# Tipo de evento MIDI Control Change / Program Change (nibble alto del estado).
 _MIDI_CONTROL_CHANGE = 0xB0
+_MIDI_PROGRAM_CHANGE = 0xC0
 
 
 class SynthEngine:
@@ -27,7 +28,9 @@ class SynthEngine:
 
         self.current_sfid = None
         self.current_sf2 = None          # nombre de archivo cargado
-        self.current_instrument = None   # {"bank", "preset", "channel"}
+        self.current_instrument = None   # {"bank", "preset", "channel", "name", "index"}
+        self.current_preset_index = 0    # índice en presets.CATALOG
+        self.sfids = {}                  # filename -> sfid (catálogo precargado)
         self.midi_source = None          # clave estable de la fuente MIDI elegida
 
         # Estado de los parámetros tipo QSynth (valores de arranque de FluidSynth)
@@ -54,15 +57,22 @@ class SynthEngine:
             # Envíos por canal (CC91 reverb, CC93 chorus), 0..127
             "reverb_send": 20,
             "chorus_send": 15,
+            # Un interruptor aplica o no las unidades nativas de sala.
+            "space_on": True,
             # Pitch bend MIDI: 0..16383, centro 8192 = sin bend (transitorio,
             # no se guarda en la sesión; arranca centrado).
             "pitch": 8192,
-            # Efecto robótico LADSPA, knob bipolar [-1, 1]: 0 = limpio,
-            # >0 = phaser + bits muy reducidos, <0 = bitcrusher (bits+sr).
+            # Efectos del knob Robot: arriba / abajo (centro = limpio).
+            "effect_up": "phaser",
+            "effect_down": "bitcrush",
             "robot": 0.0,
+            "delay_kind": "none",
         }
         self.shifter = None
         self.ladspa_error = None
+        self.effect_by_preset = {}  # index -> {"up": id, "down": id}
+        self.bpm = None
+        self.tcp_connected = False
 
     # ------------------------------------------------------------------ ciclo
     def start(self):
@@ -120,53 +130,92 @@ class SynthEngine:
         for ch in range(config.MIDI_CHANNELS):
             self.fs.program_select(ch, self.current_sfid, bank, preset)
 
-    def load_soundfont(self, path, filename):
+    def load_catalog(self):
+        """Precarga todos los .sf2 del catálogo (sin descargar los anteriores)."""
+        import presets
+
         with self._lock:
             self._ensure()
-            if self.current_sfid is not None:
-                try:
-                    self.fs.sfunload(self.current_sfid)
-                except Exception:  # noqa: BLE001
-                    pass
-                self.current_sfid = None
-            sfid = self.fs.sfload(str(path))
-            if sfid == -1:
-                raise RuntimeError(f"No se pudo cargar el SoundFont: {filename}")
+            self.sfids = {}
+            for item in presets.CATALOG:
+                filename = item["filename"]
+                if filename in self.sfids:
+                    continue
+                path = presets.resolve_catalog_path(filename)
+                sfid = self.fs.sfload(str(path))
+                if sfid == -1:
+                    raise RuntimeError(f"No se pudo cargar el SoundFont: {filename}")
+                self.sfids[filename] = sfid
+
+    def select_preset(self, index):
+        """Activa un preset del catálogo por índice (circular)."""
+        import presets
+
+        with self._lock:
+            self._ensure()
+            if not self.sfids:
+                self.load_catalog()
+            item, index = presets.catalog_item(int(index))
+            filename = item["filename"]
+            sfid = self.sfids.get(filename)
+            if sfid is None:
+                raise RuntimeError(f"SoundFont no cargado: {filename}")
+            # Corta notas del preset anterior antes de cambiar de programa.
+            self._silence_all()
             self.current_sfid = sfid
             self.current_sf2 = filename
-            # Selecciona el primer instrumento por defecto en todos los canales.
-            self._program_all(0, 0)
-            self.current_instrument = {"bank": 0, "preset": 0, "channel": 0}
-            self._apply_sends()  # el cambio de programa puede resetear los CC
+            self.current_preset_index = index
+            self._program_all(item["bank"], item["preset"])
+            self.current_instrument = {
+                "bank": item["bank"],
+                "preset": item["preset"],
+                "channel": 0,
+                "name": item["name"],
+                "filename": filename,
+                "index": index,
+            }
+            self._apply_preset_effect(item, index)
+            self._apply_sends()
+            self._apply_reverb()
+            self._apply_chorus()
             self._save_session()
-            return sfid
+
+    def step_preset(self, delta=1):
+        """Avanza o retrocede por el catálogo (delta +1 / -1)."""
+        import presets
+
+        n = len(presets.CATALOG)
+        if n == 0:
+            raise RuntimeError("Catálogo de presets vacío")
+        self.select_preset((self.current_preset_index + int(delta)) % n)
 
     def select_instrument(self, bank, preset, channel=0):
-        with self._lock:
-            self._ensure()
-            if self.current_sfid is None:
-                raise RuntimeError("Carga primero un SoundFont")
-            # El mismo instrumento suena en los canales 0..MIDI_CHANNELS-1, así
-            # que el hardware roboguitarra suena igual venga por el canal que venga.
-            self._program_all(bank, preset)
-            self.current_instrument = {
-                "bank": bank,
-                "preset": preset,
-                "channel": channel,
-            }
-            self._apply_sends()  # el cambio de programa puede resetear los CC
-            self._save_session()
+        """Compatibilidad: solo admite bank/preset que existan en el catálogo."""
+        import presets
+
+        for i, item in enumerate(presets.CATALOG):
+            if item["bank"] == int(bank) and item["preset"] == int(preset):
+                self.select_preset(i)
+                return
+        raise ValueError("Ese instrumento no está en el catálogo de presets")
 
     # ----------------------------------------------------------------- sesión
     def _save_session(self):
-        """Guarda sf2, instrumento y fuente MIDI para restaurarlos al arrancar."""
+        """Guarda el preset del catálogo y la fuente MIDI para restaurarlos."""
         try:
             config.STATE_FILE.write_text(
                 json.dumps(
                     {
+                        "preset_index": self.current_preset_index,
                         "soundfont": self.current_sf2,
                         "instrument": self.current_instrument,
                         "midi_source": self.midi_source,
+                        "effect_by_preset": self.effect_by_preset,
+                        "gain": self.params["gain"],
+                        "reverb_send": self.params["reverb_send"],
+                        "chorus_send": self.params["chorus_send"],
+                        "space_on": self.params["space_on"],
+                        "delay_kind": self.params["delay_kind"],
                     }
                 )
             )
@@ -180,38 +229,59 @@ class SynthEngine:
             self._save_session()
 
     def restore_last_session(self):
-        """Carga el último sf2 e instrumento usados, si el archivo aún existe."""
+        """Carga el catálogo y el último preset usado."""
         try:
             data = json.loads(config.STATE_FILE.read_text())
         except Exception:  # noqa: BLE001
-            return
-        # La fuente MIDI se recuerda aquí; la conexión real la hace app.py
+            data = {}
         self.midi_source = data.get("midi_source")
-        filename = data.get("soundfont")
-        if not filename:
-            return
-        import soundfonts  # import diferido para evitar acoplamiento
-
+        saved_effects = data.get("effect_by_preset") or {}
+        overlay = {}
+        for k, v in saved_effects.items():
+            try:
+                idx = int(k)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(v, dict):
+                overlay[idx] = v
+        self.effect_by_preset = overlay
+        if "reverb_send" in data:
+            try:
+                self.params["reverb_send"] = max(0, min(127, int(data["reverb_send"])))
+            except (TypeError, ValueError):
+                pass
+        if "chorus_send" in data:
+            try:
+                self.params["chorus_send"] = max(0, min(127, int(data["chorus_send"])))
+            except (TypeError, ValueError):
+                pass
+        if "space_on" in data:
+            self.params["space_on"] = bool(data["space_on"])
+        if "gain" in data:
+            try:
+                self.params["gain"] = max(0.0, min(2.0, float(data["gain"])))
+            except (TypeError, ValueError):
+                pass
+        if data.get("delay_kind") in ("none", "delay", "tape"):
+            self.params["delay_kind"] = data["delay_kind"]
         try:
-            path = soundfonts.resolve_soundfont(filename)
-        except FileNotFoundError:
-            return  # el sf2 ya no está; se ignora silenciosamente
-        try:
-            self.load_soundfont(path, filename)
-            inst = data.get("instrument") or {}
-            if "bank" in inst and "preset" in inst:
-                self.select_instrument(
-                    inst["bank"], inst["preset"], inst.get("channel", 0)
-                )
+            self.load_catalog()
+            self.select_preset(int(data.get("preset_index") or 0))
+            if self.fs:
+                self.fs.setting("synth.gain", float(self.params["gain"]))
+            self._apply_reverb()
+            self._apply_chorus()
         except Exception as exc:  # noqa: BLE001
-            self.error = f"restaurar sesión: {exc}"
+            self.error = f"restaurar catálogo: {exc}"
 
     # -------------------------------------------------------------- modulación
     def set_gain(self, value):
         with self._lock:
             self._ensure()
-            self.params["gain"] = float(value)
-            self.fs.setting("synth.gain", float(value))
+            self.params["gain"] = max(0.0, min(2.0, float(value)))
+            self.fs.setting("synth.gain", float(self.params["gain"]))
+            self._remember_preset_mix()
+            self._save_session()
 
     def set_reverb(self, **kwargs):
         with self._lock:
@@ -233,7 +303,8 @@ class SynthEngine:
         # En FluidSynth 2.x el on/off es el setting 'synth.reverb.active'
         # (no existe set_reverb_on en pyfluidsynth 1.4).
         r = self.params["reverb"]
-        self.fs.setting("synth.reverb.active", 1 if r["on"] else 0)
+        on = bool(self.params.get("space_on", True)) and r["on"]
+        self.fs.setting("synth.reverb.active", 1 if on else 0)
         self.fs.set_reverb(
             roomsize=float(r["roomsize"]),
             damping=float(r["damping"]),
@@ -243,7 +314,8 @@ class SynthEngine:
 
     def _apply_chorus(self):
         c = self.params["chorus"]
-        self.fs.setting("synth.chorus.active", 1 if c["on"] else 0)
+        on = bool(self.params.get("space_on", True)) and c["on"]
+        self.fs.setting("synth.chorus.active", 1 if on else 0)
         self.fs.set_chorus(
             nr=int(c["nr"]),
             level=float(c["level"]),
@@ -264,6 +336,18 @@ class SynthEngine:
             if chorus is not None:
                 self.params["chorus_send"] = max(0, min(127, int(chorus)))
             self._apply_sends()
+            self._remember_preset_mix()
+            self._save_session()
+
+    def set_space_on(self, enabled):
+        """Activa o silencia las unidades nativas de reverb y chorus."""
+        with self._lock:
+            self._ensure()
+            self.params["space_on"] = bool(enabled)
+            self._apply_reverb()
+            self._apply_chorus()
+            self._remember_preset_mix()
+            self._save_session()
 
     def _apply_sends(self):
         # Se aplica a los 16 canales para que valga tanto para el teclado en
@@ -273,9 +357,8 @@ class SynthEngine:
             self.fs.cc(ch, 93, int(self.params["chorus_send"]))
 
     def _load_ladspa(self):
-        """Carga la cadena LADSPA del efecto robótico (phaser + crush +
-        bitcrusher). Si falla, se ignora: el resto del motor sigue
-        funcionando sin el efecto."""
+        """Prepara el host LADSPA. Los plugins se montan al usar el knob
+        Robot; en el centro el grafo está vacío (audio limpio)."""
         try:
             from ladspa import RobotFx
 
@@ -289,12 +372,150 @@ class SynthEngine:
             self.shifter = None
             self.ladspa_error = str(exc)
 
+    def _apply_robot(self):
+        """Aplica el efecto de arriba o de abajo según el signo de robot.
+
+        Misma regla para la web y para el CC MIDI del joystick:
+        t > 0 → effect_up, t < 0 → effect_down, ~0 → limpio.
+        El delay de sala (si está elegido) se monta siempre, al tempo TCP.
+        """
+        if not self.shifter:
+            return
+        t = float(self.params["robot"])
+        delay = self.params.get("delay_kind") or "none"
+        bpm = self.bpm if self.bpm else config.DEFAULT_BPM
+        if t > 0.02:
+            self.shifter.apply(self.params.get("effect_up"), t, delay, bpm)
+        elif t < -0.02:
+            self.shifter.apply(self.params.get("effect_down"), -t, delay, bpm)
+        else:
+            self.shifter.apply(None, 0.0, delay, bpm)
+
+    def set_delay_kind(self, delay_id):
+        import effects as fxcat
+
+        with self._lock:
+            if not fxcat.known_delay(delay_id):
+                raise ValueError(f"Delay desconocido: {delay_id}")
+            self._ensure()
+            self.params["delay_kind"] = delay_id
+            self._remember_preset_mix()
+            self._apply_robot()
+            self._save_session()
+
+    def set_bpm(self, bpm, connected=None):
+        """Tempo del tracker (TCP). Recalcula el delay si está activo."""
+        with self._lock:
+            try:
+                self.bpm = max(20.0, min(300.0, float(bpm)))
+            except (TypeError, ValueError):
+                return
+            if connected is not None:
+                self.tcp_connected = bool(connected)
+            if self.shifter:
+                self.shifter.set_tempo(self.bpm)
+
+    def set_tcp_connected(self, connected):
+        with self._lock:
+            self.tcp_connected = bool(connected)
+
+    def _snapshot_mix(self):
+        return {
+            "up": self.params.get("effect_up"),
+            "down": self.params.get("effect_down"),
+            "gain": self.params["gain"],
+            "reverb_send": self.params["reverb_send"],
+            "chorus_send": self.params["chorus_send"],
+            "space_on": self.params["space_on"],
+            "delay_kind": self.params.get("delay_kind") or "none",
+        }
+
+    def _remember_preset_mix(self):
+        """Guarda en la sesión el mix actual de este preset (aún sin Guardar)."""
+        idx = self.current_preset_index
+        prev = self.effect_by_preset.get(idx) or {}
+        if not isinstance(prev, dict):
+            prev = {}
+        mix = self._snapshot_mix()
+        mix["up"] = mix["up"] or prev.get("up")
+        mix["down"] = mix["down"] or prev.get("down")
+        self.effect_by_preset[idx] = mix
+
+    def _apply_mix(self, mix):
+        if not mix:
+            return
+        if "gain" in mix:
+            self.params["gain"] = float(mix["gain"])
+            if self.fs:
+                self.fs.setting("synth.gain", float(mix["gain"]))
+        if "reverb_send" in mix:
+            self.params["reverb_send"] = int(mix["reverb_send"])
+        if "chorus_send" in mix:
+            self.params["chorus_send"] = int(mix["chorus_send"])
+        if "space_on" in mix:
+            self.params["space_on"] = bool(mix["space_on"])
+        if mix.get("delay_kind") in ("none", "delay", "tape"):
+            self.params["delay_kind"] = mix["delay_kind"]
+
+    def _apply_preset_effect(self, item, index):
+        import effects as fxcat
+
+        overlay = self.effect_by_preset.get(index)
+        saved = fxcat.saved_default_for(index)
+        up, down = fxcat.resolve_pair(item, overlay, saved)
+        self.params["effect_up"] = up
+        self.params["effect_down"] = down
+        self._apply_mix(fxcat.resolve_mix(overlay, saved))
+        self._apply_robot()
+
+    def effects_for_index(self, index):
+        import effects as fxcat
+        import presets as preset_catalog
+
+        item = {}
+        if 0 <= index < len(preset_catalog.CATALOG):
+            item = preset_catalog.CATALOG[index]
+        up, down = fxcat.resolve_pair(
+            item,
+            self.effect_by_preset.get(index),
+            fxcat.saved_default_for(index),
+        )
+        return {"up": up, "down": down}
+
+    def set_effect(self, effect_id, side="up"):
+        """Asigna el efecto de arriba o de abajo del preset actual."""
+        import effects as fxcat
+
+        side = "down" if side == "down" else "up"
+        with self._lock:
+            if not fxcat.known_effect(effect_id):
+                raise ValueError(f"Efecto desconocido: {effect_id}")
+            key = "effect_down" if side == "down" else "effect_up"
+            self.params[key] = effect_id
+            self._remember_preset_mix()
+            self._apply_robot()
+            self._save_session()
+
+    def save_effect_default(self):
+        """Guarda efectos, gain y sala como predeterminado de este preset."""
+        import effects as fxcat
+
+        with self._lock:
+            up = self.params.get("effect_up")
+            down = self.params.get("effect_down")
+            if not fxcat.known_effect(up) or not fxcat.known_effect(down):
+                raise ValueError("Efecto desconocido")
+            idx = self.current_preset_index
+            mix = self._snapshot_mix()
+            fxcat.save_preset_default(idx, up, down, self.current_sf2, mix=mix)
+            self.effect_by_preset[idx] = mix
+            self._save_session()
+
     def set_robot(self, t):
-        """Efecto robótico, knob bipolar [-1, 1] (0 = limpio)."""
+        """Knob/joystick bipolar [-1, 1]. Web y MIDI usan este mismo método."""
         with self._lock:
             self.params["robot"] = max(-1.0, min(1.0, float(t)))
-            if self.shifter:
-                self.shifter.set_robot(self.params["robot"])
+            self._apply_robot()
 
     def _midi_router(self, data, event):
         """Router MIDI custom (se ejecuta en el hilo del driver MIDI).
@@ -305,9 +526,11 @@ class SynthEngine:
         FLUID_OK (0).
         """
         try:
-            if fluidsynth.fluid_midi_event_get_type(event) == _MIDI_CONTROL_CHANGE:
-                if fluidsynth.fluid_midi_event_get_control(event) == config.ROBOT_CC:
-                    val = fluidsynth.fluid_midi_event_get_value(event)
+            etype = fluidsynth.fluid_midi_event_get_type(event)
+            if etype == _MIDI_CONTROL_CHANGE:
+                cc = fluidsynth.fluid_midi_event_get_control(event)
+                val = fluidsynth.fluid_midi_event_get_value(event)
+                if cc == config.ROBOT_CC:
                     # CC 0..127 con centro 64 -> t bipolar [-1, 1] (igual que
                     # el knob de la web). El firmware lo manda en varios canales,
                     # así que evitamos recalcular si no cambia.
@@ -315,6 +538,25 @@ class SynthEngine:
                     if t != self.params["robot"]:
                         self.set_robot(t)
                     return 0  # FLUID_OK; no reenviar a FluidSynth
+                if val >= 64:
+                    if cc == config.PRESET_BTN_CC:
+                        self.step_preset(1)
+                        return 0
+                    if cc == config.SPACE_BTN_CC:
+                        self.set_space_on(not self.params.get("space_on", True))
+                        return 0
+                    if cc == config.PANIC_BTN_CC:
+                        self.panic()
+                        return 0
+            elif etype == _MIDI_PROGRAM_CHANGE:
+                getter = getattr(fluidsynth, "fluid_midi_event_get_program", None)
+                if getter is not None and self.sfids:
+                    import presets as preset_catalog
+
+                    prog = getter(event)
+                    if 0 <= prog < len(preset_catalog.CATALOG):
+                        self.select_preset(prog)
+                    return 0
         except Exception:  # noqa: BLE001
             pass  # nunca romper el flujo MIDI por un fallo aquí
         # Resto de eventos: comportamiento por defecto de FluidSynth.
@@ -345,12 +587,33 @@ class SynthEngine:
             self._ensure()
             self.fs.noteoff(channel, int(key))
 
+    def _silence_all(self):
+        """Corta voces ya disparadas. CC123 a veces no basta con samples en loop."""
+        for ch in range(16):
+            self.fs.cc(ch, 120, 0)  # All Sound Off
+            self.fs.cc(ch, 123, 0)  # All Notes Off
+            self.fs.cc(ch, 121, 0)  # Reset All Controllers
+            for key in range(128):
+                self.fs.noteoff(ch, key)
+
     def panic(self):
-        """Apaga todas las notas en todos los canales (CC 123)."""
+        """Corta todo lo que suena: notas, cola de delay, bend y Robot al centro.
+
+        No cambia el preset: el delay y la sala se quedan como están guardados.
+        """
         with self._lock:
             self._ensure()
+            self._silence_all()
+            self.params["pitch"] = 8192
             for ch in range(16):
-                self.fs.cc(ch, 123, 0)
+                self.fs.pitch_bend(ch, 0)
+            self.params["robot"] = 0.0
+            if self.shifter:
+                self.shifter._tear_down()
+            self._apply_robot()
+            self._apply_sends()
+            self._apply_reverb()
+            self._apply_chorus()
 
     # ------------------------------------------------------------------ estado
     def get_state(self):
@@ -360,10 +623,13 @@ class SynthEngine:
                 "error": self.error,
                 "soundfont": self.current_sf2,
                 "instrument": self.current_instrument,
+                "preset_index": self.current_preset_index,
                 "midi_source": self.midi_source,
                 "ladspa": bool(self.shifter),
                 "ladspa_error": self.ladspa_error,
                 "params": self.params,
+                "bpm": self.bpm,
+                "tcp_connected": self.tcp_connected,
             }
 
 

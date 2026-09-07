@@ -21,65 +21,133 @@ function setStatus(state) {
   }
 }
 
-// ----------------------------------------------------------------- SoundFonts
-async function loadSoundfontList() {
-  const list = await api("/api/soundfonts");
-  const sel = $("sf2-select");
+// ----------------------------------------------------------------- Presets
+async function applyPresetState(state) {
+  const data = await api("/api/presets");
+  const items = data.presets || [];
+  window.__presetCount = items.length;
+  const idx =
+    typeof state.preset_index === "number" ? state.preset_index : data.index || 0;
+  const item = items[idx] || {};
+  $("preset-name").textContent = item.name || "—";
+  $("preset-meta").textContent = items.length
+    ? `${idx + 1} / ${items.length} · ${item.bank}:${item.preset}`
+    : "sin presets";
+  syncEffectSelects(state);
+}
+
+function fillEffectSelect(sel, effects, current) {
   sel.innerHTML = "";
-  if (!list.length) {
-    sel.innerHTML = '<option value="">(carpeta soundfonts vacía)</option>';
+  for (const fx of effects) {
+    const o = document.createElement("option");
+    o.value = fx.id;
+    o.textContent = fx.name;
+    sel.appendChild(o);
+  }
+  if (current) sel.value = current;
+}
+
+function syncEffectSelects(state) {
+  const p = (state && state.params) || {};
+  const up = $("effect-up");
+  const down = $("effect-down");
+  const delay = $("delay-kind");
+  if (up && p.effect_up) up.value = p.effect_up;
+  if (down && p.effect_down) down.value = p.effect_down;
+  if (delay && p.delay_kind) delay.value = p.delay_kind;
+  syncDelayTempo(state);
+}
+
+function syncDelayTempo(state) {
+  const el = $("delay-tempo");
+  if (!el) return;
+  const bpm = state && state.bpm;
+  const tcp = state && state.tcp_connected;
+  if (typeof bpm === "number") {
+    el.textContent = tcp
+      ? `Tempo: ${Math.round(bpm)} BPM (TCP)`
+      : `Tempo: ${Math.round(bpm)} BPM`;
+  } else if (tcp) {
+    el.textContent = "Tempo: esperando BPM por TCP";
+  } else {
+    el.textContent = "Tempo: 120 BPM (sin TCP)";
+  }
+}
+
+async function loadEffectList(state) {
+  const data = await api("/api/effects");
+  const effects = data.effects || [];
+  const p = (state && state.params) || {};
+  fillEffectSelect($("effect-up"), effects, p.effect_up || data.up);
+  fillEffectSelect($("effect-down"), effects, p.effect_down || data.down);
+  fillEffectSelect($("delay-kind"), data.delays || [], p.delay_kind || data.delay || "none");
+}
+
+async function onEffectSideChange(side, selId) {
+  const id = $(selId).value;
+  if (!id) return;
+  const state = await api("/api/effect", { id, side });
+  if (state.error) {
+    $("preset-meta").textContent = "Error: " + state.error;
     return;
   }
-  for (const sf of list) {
-    const o = document.createElement("option");
-    o.value = sf.filename;
-    o.textContent = `${sf.filename} (${sf.size_mb} MB)`;
-    sel.appendChild(o);
-  }
+  applyState(state);
 }
 
-$("sf2-load").addEventListener("click", async () => {
-  const filename = $("sf2-select").value;
-  if (!filename) return;
-  $("sf2-load").disabled = true;
-  $("sf2-load").textContent = "Cargando…";
-  try {
-    const res = await api("/api/soundfont/load", { filename });
-    if (res.error) throw new Error(res.error);
-    $("sf2-current").textContent = `Cargado: ${res.soundfont}`;
-    fillInstruments(res.instruments);
-  } catch (e) {
-    $("sf2-current").textContent = "Error: " + e.message;
-  } finally {
-    $("sf2-load").disabled = false;
-    $("sf2-load").textContent = "Cargar";
+$("effect-up").addEventListener("change", () => onEffectSideChange("up", "effect-up"));
+$("effect-down").addEventListener("change", () => onEffectSideChange("down", "effect-down"));
+
+$("delay-kind").addEventListener("change", async () => {
+  const kind = $("delay-kind").value;
+  const state = await api("/api/params", { delay_kind: kind });
+  if (state.error) {
+    $("preset-meta").textContent = "Error: " + state.error;
+    return;
   }
+  applyState(state);
 });
 
-// ----------------------------------------------------------------- Instrumentos
-function fillInstruments(instruments) {
-  const sel = $("inst-select");
-  sel.innerHTML = "";
-  for (const ins of instruments) {
-    const o = document.createElement("option");
-    o.value = `${ins.bank}:${ins.preset}`;
-    o.textContent = `${ins.bank}:${ins.preset} — ${ins.name}`;
-    sel.appendChild(o);
+document.querySelectorAll(".js-save-preset").forEach((btn) => {
+  btn.addEventListener("click", savePresetMix);
+});
+
+async function savePresetMix() {
+  const buttons = document.querySelectorAll(".js-save-preset");
+  const state = await api("/api/effect/default");
+  if (state.error) {
+    $("preset-meta").textContent = "Error: " + state.error;
+    return;
   }
-  const has = instruments.length > 0;
-  sel.disabled = !has;
-  $("inst-select-btn").disabled = !has;
+  applyState(state);
+  buttons.forEach((btn) => {
+    btn.textContent = "Guardado";
+    btn.disabled = true;
+  });
+  setTimeout(() => {
+    buttons.forEach((btn) => {
+      btn.textContent = "Guardar";
+      btn.disabled = false;
+    });
+  }, 1200);
 }
 
-$("inst-select-btn").addEventListener("click", async () => {
-  const v = $("inst-select").value;
-  if (!v) return;
-  const [bank, preset] = v.split(":").map(Number);
-  const res = await api("/api/instrument", { bank, preset });
-  if (res.instrument) {
-    $("inst-current").textContent =
-      `Activo: banco ${res.instrument.bank}, preset ${res.instrument.preset}`;
+$("preset-prev").addEventListener("click", async () => {
+  const state = await api("/api/presets/step", { delta: -1 });
+  if (state.error) {
+    $("preset-meta").textContent = "Error: " + state.error;
+    return;
   }
+  applyState(state);
+  await applyPresetState(state);
+});
+$("preset-next").addEventListener("click", async () => {
+  const state = await api("/api/presets/step", { delta: 1 });
+  if (state.error) {
+    $("preset-meta").textContent = "Error: " + state.error;
+    return;
+  }
+  applyState(state);
+  await applyPresetState(state);
 });
 
 // ----------------------------------------------------------------- Knobs
@@ -123,7 +191,10 @@ function setupKnob(el, { onChange, format } = {}) {
     const dy = startY - e.clientY; // arrastrar hacia arriba = subir
     setValue(startVal + (dy / 150) * (max - min), true);
   });
-  const stop = () => (dragging = false);
+  const stop = () => {
+    dragging = false;
+    if (onChange && onChange.flush) onChange.flush();
+  };
   dial.addEventListener("pointerup", stop);
   dial.addEventListener("pointercancel", stop);
   dial.addEventListener("dblclick", () => setValue(def, true)); // reset
@@ -131,42 +202,73 @@ function setupKnob(el, { onChange, format } = {}) {
   return { setValue: (v) => setValue(v, false), getValue: () => value };
 }
 
-// Envío al motor con debounce (para no saturar al arrastrar el knob).
-function debounce(fn, ms) {
-  let t;
-  return (v) => {
-    clearTimeout(t);
-    t = setTimeout(() => fn(v), ms);
+// Mientras se arrastra: primer valor al momento, luego como mucho cada `ms`.
+// Al soltar, flush manda el valor final. (Un debounce solo enviaba al parar.)
+function throttle(fn, ms) {
+  let last = 0;
+  let timer = null;
+  let pending = null;
+  const send = (v) => {
+    last = Date.now();
+    timer = null;
+    pending = null;
+    fn(v);
   };
+  const wrapped = (v) => {
+    pending = v;
+    const wait = ms - (Date.now() - last);
+    if (last === 0 || wait <= 0) {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      send(v);
+      return;
+    }
+    if (!timer) timer = setTimeout(() => send(pending), wait);
+  };
+  wrapped.flush = () => {
+    if (pending == null) return;
+    if (timer) clearTimeout(timer);
+    send(pending);
+  };
+  return wrapped;
 }
 
 // Configuración por knob: cómo se envía al motor y cómo se muestra el valor.
 //  - gain  : volumen real (0..2)
 //  - pitch : bend MIDI 0..16383 (centro 8192); el knob 0..1 -> 0..16383
-//  - robot : efecto robótico bipolar (centro limpio, ↑ shifter, ↓ bitcrush)
-const PITCH_RANGE_ST = 2; // semitonos a cada lado (pitch_wheel_sens por defecto)
-const MAX_SHIFT_HZ = 1500; // recorrido del frequency shifter en la mitad de arriba
+//  - robot : bipolar, centro limpio; ↑ effect_up, ↓ effect_down
+//  - reverb/chorus : envío 0..1 → CC 0..127 (unidades nativas de FluidSynth)
+const PITCH_RANGE_ST = 2;
 const KNOB_CONFIG = {
   gain: {
-    onChange: debounce((v) => api("/api/params", { gain: v }), 40),
+    onChange: throttle((v) => api("/api/params", { gain: v }), 40),
     format: (v) => v.toFixed(2),
   },
   pitch: {
-    onChange: debounce((v) => api("/api/params", { pitch: Math.round(v * 16383) }), 30),
+    onChange: throttle((v) => api("/api/params", { pitch: Math.round(v * 16383) }), 30),
     format: (v) => {
       const st = (v - 0.5) * 2 * PITCH_RANGE_ST;
       return (st >= 0 ? "+" : "") + st.toFixed(1) + " st";
     },
   },
-  // Bipolar: knob 0..1 -> t en [-1, 1]. Centro = limpio.
   robot: {
-    onChange: debounce((v) => api("/api/params", { robot: (v - 0.5) * 2 }), 40),
+    onChange: throttle((v) => api("/api/params", { robot: (v - 0.5) * 2 }), 40),
     format: (v) => {
       const t = (v - 0.5) * 2;
-      if (t > 0.02) return "↑ " + Math.round(t * MAX_SHIFT_HZ) + " Hz";
-      if (t < -0.02) return "↓ crush " + Math.round(-t * 100) + "%";
+      if (t > 0.02) return "↑ " + Math.round(t * 100) + "%";
+      if (t < -0.02) return "↓ " + Math.round(-t * 100) + "%";
       return "limpio";
     },
+  },
+  reverb: {
+    onChange: throttle((v) => api("/api/params", { reverb_send: Math.round(v * 127) }), 40),
+    format: (v) => Math.round(v * 100) + "%",
+  },
+  chorus: {
+    onChange: throttle((v) => api("/api/params", { chorus_send: Math.round(v * 127) }), 40),
+    format: (v) => Math.round(v * 100) + "%",
   },
 };
 
@@ -178,14 +280,39 @@ document.querySelectorAll(".knob").forEach((el) => {
 // Estado básico (motor + soundfont) y sincroniza los knobs con el motor.
 function applyState(state) {
   setStatus(state);
-  if (state.soundfont) $("sf2-current").textContent = `Cargado: ${state.soundfont}`;
   const p = state.params;
   if (!p) return;
   if (knobs.gain && typeof p.gain === "number") knobs.gain.setValue(p.gain);
   if (knobs.pitch && typeof p.pitch === "number") knobs.pitch.setValue(p.pitch / 16383);
   if (knobs.robot && typeof p.robot === "number")
     knobs.robot.setValue(p.robot / 2 + 0.5);
+  if (knobs.reverb && typeof p.reverb_send === "number")
+    knobs.reverb.setValue(p.reverb_send / 127);
+  if (knobs.chorus && typeof p.chorus_send === "number")
+    knobs.chorus.setValue(p.chorus_send / 127);
+  syncSpaceToggle(p.space_on !== false);
+  syncEffectSelects(state);
 }
+
+function syncSpaceToggle(on) {
+  const btn = $("space-toggle");
+  const row = document.querySelector(".knobs--space");
+  if (!btn) return;
+  btn.setAttribute("aria-pressed", on ? "true" : "false");
+  btn.textContent = on ? "Reverb y chorus: on" : "Reverb y chorus: off";
+  btn.classList.toggle("btn--primary", on);
+  if (row) row.classList.toggle("is-off", !on);
+}
+
+$("space-toggle").addEventListener("click", async () => {
+  const on = $("space-toggle").getAttribute("aria-pressed") !== "true";
+  const state = await api("/api/params", { space_on: on });
+  if (state.error) {
+    $("preset-meta").textContent = "Error: " + state.error;
+    return;
+  }
+  applyState(state);
+});
 
 // ----------------------------------------------------------------- MIDI
 async function loadMidiSources() {
@@ -223,17 +350,17 @@ $("panic").addEventListener("click", () => api("/api/panic"));
 
 // ----------------------------------------------------------------- arranque
 (async function init() {
-  await loadSoundfontList();
   await loadMidiSources();
   const state = await api("/api/params");
   applyState(state);
-  if (state.soundfont) {
-    const instruments = await api("/api/instruments");
-    fillInstruments(instruments);
-    if (state.instrument) {
-      $("inst-select").value = `${state.instrument.bank}:${state.instrument.preset}`;
-      $("inst-current").textContent =
-        `Activo: banco ${state.instrument.bank}, preset ${state.instrument.preset}`;
+  await loadEffectList(state);
+  await applyPresetState(state);
+  setInterval(async () => {
+    try {
+      const live = await api("/api/params");
+      syncDelayTempo(live);
+    } catch (err) {
+      /* el tempo se actualizará en el siguiente ciclo */
     }
-  }
+  }, 2000);
 })();

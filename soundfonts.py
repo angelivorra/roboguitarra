@@ -9,14 +9,38 @@ from pathlib import Path
 
 import config
 
+ALLOWLIST_FILE = "allowlist.txt"
+
+
+def _allowlisted_names():
+    """Nombres de .sf2 permitidos (minúsculas), o None si no hay filtro.
+
+    Si existe soundfonts/allowlist.txt con al menos una entrada, solo esos
+    archivos se ofrecen en la UI. Si el archivo no existe o está vacío,
+    se listan todos los .sf2 de la carpeta.
+    """
+    path = config.SOUNDFONT_DIR / ALLOWLIST_FILE
+    if not path.is_file():
+        return None
+    names = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        names.append(line.lower())
+    return names or None
+
 
 def list_soundfonts():
     """Devuelve los .sf2 disponibles en la carpeta configurada."""
     folder = config.SOUNDFONT_DIR
     if not folder.exists():
         return []
+    allow = _allowlisted_names()
     items = []
     for path in sorted(p for p in folder.iterdir() if p.suffix.lower() == ".sf2"):
+        if allow is not None and path.name.lower() not in allow:
+            continue
         items.append(
             {
                 "filename": path.name,

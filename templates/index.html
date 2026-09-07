@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <meta name="theme-color" content="#0d1117" />
   <title>Roboguitarra</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}?v=scroll3" />
 </head>
 <body>
   <header class="topbar">
@@ -14,27 +14,21 @@
   </header>
 
   <main>
-    <!-- 1. SoundFont -->
+    <!-- 1. Preset (solo los del catálogo) -->
     <section class="card">
-      <h2>SoundFont</h2>
+      <h2>Preset</h2>
       <div class="row">
-        <select id="sf2-select" aria-label="Archivo SoundFont"></select>
-        <button id="sf2-load" class="btn btn--primary">Cargar</button>
+        <button id="preset-prev" class="btn btn--nav" aria-label="Preset anterior">◀</button>
+        <p id="preset-name" class="preset-name">—</p>
+        <button id="preset-next" class="btn btn--nav" aria-label="Preset siguiente">▶</button>
       </div>
-      <p id="sf2-current" class="hint">Ninguno cargado</p>
+      <p id="preset-meta" class="hint">—</p>
+      <button class="js-save-preset btn btn--save btn--block" type="button">
+        Guardar
+      </button>
     </section>
 
-    <!-- 2. Instrumento -->
-    <section class="card">
-      <h2>Instrumento</h2>
-      <div class="row">
-        <select id="inst-select" aria-label="Instrumento" disabled></select>
-        <button id="inst-select-btn" class="btn" disabled>Seleccionar</button>
-      </div>
-      <p id="inst-current" class="hint">—</p>
-    </section>
-
-    <!-- 3. Entrada MIDI -->
+    <!-- 2. Entrada MIDI -->
     <section class="card">
       <div class="row row--between">
         <h2>Entrada MIDI</h2>
@@ -50,7 +44,7 @@
       <p id="midi-current" class="hint">—</p>
     </section>
 
-    <!-- 4. Modulación (estilo QSynth) -->
+    <!-- 3. Modulación (estilo QSynth) -->
     <section class="card">
       <h2>Modulación</h2>
       <div class="knobs">
@@ -70,7 +64,40 @@
           <output class="knob__val"></output>
         </div>
       </div>
-      <p class="hint">Gain = volumen · Pitch = bend (±2 st) · Robot: centro = limpio, arriba = shifter metálico, abajo = bitcrush 8-bit. (Doble toque para centrar.)</p>
+      <p class="hint">Gain = volumen · Pitch = bend (±2 st) · Robot: centro = limpio, arriba / abajo = efecto de cada lado. (Doble toque para centrar.)</p>
+      <div class="row row--effect">
+        <label class="hint" for="effect-up">↑ Arriba</label>
+        <select id="effect-up" aria-label="Efecto hacia arriba"></select>
+      </div>
+      <div class="row row--effect">
+        <label class="hint" for="effect-down">↓ Abajo</label>
+        <select id="effect-down" aria-label="Efecto hacia abajo"></select>
+      </div>
+      <div class="row row--effect">
+        <label class="hint" for="delay-kind">Delay</label>
+        <select id="delay-kind" aria-label="Tipo de delay"></select>
+      </div>
+      <p id="delay-tempo" class="hint">Tempo: —</p>
+      <div class="knobs knobs--space">
+        <div class="knob" data-knob="reverb" data-min="0" data-max="1" data-value="0.157">
+          <div class="knob__dial"><span class="knob__pointer"></span></div>
+          <span class="knob__label">Reverb</span>
+          <output class="knob__val"></output>
+        </div>
+        <div class="knob" data-knob="chorus" data-min="0" data-max="1" data-value="0.118">
+          <div class="knob__dial"><span class="knob__pointer"></span></div>
+          <span class="knob__label">Chorus</span>
+          <output class="knob__val"></output>
+        </div>
+      </div>
+      <button id="space-toggle" class="btn btn--small btn--block btn--primary" type="button" aria-pressed="true">
+        Reverb y chorus: on
+      </button>
+      <p class="hint">Los knobs marcan cuánta sala entra; el botón aplica esos niveles o los deja en silencio.</p>
+      <p class="hint">En la guitarra: botón 1ª cuerda = siguiente sonido · 2ª = sala on/off · 3ª = pánico.</p>
+      <button class="js-save-preset btn btn--save btn--block" type="button">
+        Guardar
+      </button>
     </section>
   </main>
 

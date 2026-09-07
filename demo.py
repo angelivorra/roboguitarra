@@ -15,8 +15,8 @@ import fluidsynth
 
 from ladspa import RobotFx
 
-SF = "soundfonts/Casio SA-51.sf2"
-PRESET = 18  # Rock Organ (sostenido, rico en armónicos)
+SF = "soundfonts/2_solS.sf2"
+PRESET = 0
 OUT = sys.argv[1] if len(sys.argv) > 1 else "demo_roboguitarra.wav"
 
 fs = fluidsynth.Synth(gain=0.7, samplerate=44100, **{"synth.ladspa.active": 1})

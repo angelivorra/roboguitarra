@@ -53,6 +53,12 @@ const uint8_t NUM_CANALES  = sizeof(CANALES) / sizeof(CANALES[0]);
 const uint8_t CC_ROBOT = 20;
 const uint8_t CC_ROBOT_CENTRO = 64;  // valor "limpio" (centro del joystick)
 
+// Botones arcade (uno por cuerda). Pulso = CC 127 en el canal 1.
+// Deben coincidir con PRESET_BTN_CC / SPACE_BTN_CC / PANIC_BTN_CC en config.py.
+const uint8_t CC_BTN_PRESET = 21;  // cuerda 1 (Mi agudo): siguiente sonido
+const uint8_t CC_BTN_SPACE  = 22;  // cuerda 2 (Si): sala (reverb+chorus) on/off
+const uint8_t CC_BTN_PANIC  = 23;  // cuerda 3 (Sol): pánico (todo calla)
+
 // Joystick: zona muerta (cuentas ADC) y cadencia de envío.
 const int          JOY_ZONA_MUERTA  = 40;
 const unsigned long JOY_INTERVALO_MS = 5;
@@ -238,6 +244,12 @@ void enviaCC(uint8_t cc, uint8_t valor) {
   }
 }
 
+// Un solo paquete (si se mandara en los 3 canales el servidor lo haría 3 veces).
+void enviaCCUnCanal(uint8_t cc, uint8_t valor) {
+  midiEventPacket_t ev = { 0x0B, (uint8_t)(0xB0 | CANALES[0]), cc, valor };
+  midiEnvia(ev);
+}
+
 // ============================================================
 //  Mástil: máquina de estados del dedo + disparo de nota
 // ============================================================
@@ -421,16 +433,21 @@ void procesaMastil(uint8_t c, unsigned long ahora) {
       break;
   }
 
-  // ---- Botón arcade: por ahora no dispara nada. Las cuerdas se activan
-  // con el gesto de disparo del joystick (ver procesaJoystick/disparaCuerdas),
-  // que solo afecta a las cuerdas con dedo puesto. Se deja el antirrebote
-  // leyendo el estado del botón para cuando se decida qué función darle.
+  // ---- Botón arcade: un toque (no al soltar). Cuerda 1 = siguiente
+  // sonido, 2 = sala on/off, 3 = pánico. El rasgueo sigue siendo el
+  // joystick (procesaJoystick/disparaCuerdas).
   bool lecturaBoton = (digitalRead(PIN_BOTON[c]) == LOW);
   if (lecturaBoton != e.botonEstado) {
     if (e.tBoton == 0) e.tBoton = ahora;
     if (ahora - e.tBoton >= tBotonMs) {
+      bool antes = e.botonEstado;
       e.botonEstado = lecturaBoton;
       e.tBoton = 0;
+      if (!antes && e.botonEstado) {
+        if (c == 0) enviaCCUnCanal(CC_BTN_PRESET, 127);
+        else if (c == 1) enviaCCUnCanal(CC_BTN_SPACE, 127);
+        else enviaCCUnCanal(CC_BTN_PANIC, 127);
+      }
     }
   } else {
     e.tBoton = 0;
