@@ -9,12 +9,15 @@ seguro para cambios de estado concurrentes.
 """
 import json
 import threading
+import time
 
 import fluidsynth
 
 import config
 
 # Tipo de evento MIDI Control Change / Program Change (nibble alto del estado).
+_MIDI_NOTE_OFF = 0x80
+_MIDI_NOTE_ON = 0x90
 _MIDI_CONTROL_CHANGE = 0xB0
 _MIDI_PROGRAM_CHANGE = 0xC0
 
@@ -73,6 +76,10 @@ class SynthEngine:
         self.effect_by_preset = {}  # index -> {"up": id, "down": id}
         self.bpm = None
         self.tcp_connected = False
+        # Notas MIDI que el motor tiene encendidas (para cazar drones).
+        self._sounding = {}  # (channel, key) -> time.monotonic()
+        self._notes_lock = threading.Lock()
+        self._notes_watch = None
 
     # ------------------------------------------------------------------ ciclo
     def start(self):
@@ -110,6 +117,7 @@ class SynthEngine:
                 self._apply_sends()
                 self.started = True
                 self.error = None
+                self._start_notes_watch()
             except Exception as exc:  # noqa: BLE001
                 self.error = f"{type(exc).__name__}: {exc}"
                 self.started = False
@@ -517,6 +525,52 @@ class SynthEngine:
             self.params["robot"] = max(-1.0, min(1.0, float(t)))
             self._apply_robot()
 
+    def _midi_log(self, msg):
+        print(f"[midi] {msg}", flush=True)
+
+    def _note_on_track(self, channel, key, src="midi"):
+        with self._notes_lock:
+            self._sounding[(int(channel), int(key))] = time.monotonic()
+        self._midi_log(f"ON  ch{int(channel)+1} nota {int(key)}  ({src})")
+
+    def _note_off_track(self, channel, key, src="midi"):
+        with self._notes_lock:
+            self._sounding.pop((int(channel), int(key)), None)
+        self._midi_log(f"OFF ch{int(channel)+1} nota {int(key)}  ({src})")
+
+    def _notes_snapshot(self):
+        now = time.monotonic()
+        with self._notes_lock:
+            items = sorted(self._sounding.items())
+        return [
+            {
+                "ch": ch,
+                "note": key,
+                "ms": int((now - t0) * 1000),
+            }
+            for (ch, key), t0 in items
+        ]
+
+    def _start_notes_watch(self):
+        if self._notes_watch and self._notes_watch.is_alive():
+            return
+
+        def _loop():
+            while True:
+                time.sleep(2.0)
+                snap = self._notes_snapshot()
+                if not snap:
+                    continue
+                bits = ", ".join(
+                    f"ch{n['ch']+1} n{n['note']} {n['ms']/1000:.1f}s" for n in snap
+                )
+                self._midi_log(f"VIVAS {bits}")
+
+        self._notes_watch = threading.Thread(
+            target=_loop, name="midi-vivas", daemon=True
+        )
+        self._notes_watch.start()
+
     def _midi_router(self, data, event):
         """Router MIDI custom (se ejecuta en el hilo del driver MIDI).
 
@@ -527,9 +581,26 @@ class SynthEngine:
         """
         try:
             etype = fluidsynth.fluid_midi_event_get_type(event)
+            if etype in (_MIDI_NOTE_ON, _MIDI_NOTE_OFF):
+                ch = fluidsynth.fluid_midi_event_get_channel(event)
+                key = fluidsynth.fluid_midi_event_get_key(event)
+                vel = fluidsynth.fluid_midi_event_get_velocity(event)
+                if etype == _MIDI_NOTE_OFF or vel == 0:
+                    self._note_off_track(ch, key)
+                else:
+                    self._note_on_track(ch, key)
             if etype == _MIDI_CONTROL_CHANGE:
                 cc = fluidsynth.fluid_midi_event_get_control(event)
                 val = fluidsynth.fluid_midi_event_get_value(event)
+                if cc in (120, 123):
+                    snap = self._notes_snapshot()
+                    if snap:
+                        bits = ", ".join(
+                            f"ch{n['ch']+1} n{n['note']}" for n in snap
+                        )
+                        self._midi_log(f"CC{cc} AllOff  cortaba {bits}")
+                    with self._notes_lock:
+                        self._sounding.clear()
                 if cc == config.ROBOT_CC:
                     # CC 0..127 con centro 64 -> t bipolar [-1, 1] (igual que
                     # el knob de la web). El firmware lo manda en varios canales,
@@ -581,14 +652,18 @@ class SynthEngine:
         with self._lock:
             self._ensure()
             self.fs.noteon(channel, int(key), int(velocity))
+            self._note_on_track(channel, key, src="web")
 
     def note_off(self, key, channel=0):
         with self._lock:
             self._ensure()
             self.fs.noteoff(channel, int(key))
+            self._note_off_track(channel, key, src="web")
 
     def _silence_all(self):
         """Corta voces ya disparadas. CC123 a veces no basta con samples en loop."""
+        with self._notes_lock:
+            self._sounding.clear()
         for ch in range(16):
             self.fs.cc(ch, 120, 0)  # All Sound Off
             self.fs.cc(ch, 123, 0)  # All Notes Off
@@ -603,6 +678,14 @@ class SynthEngine:
         """
         with self._lock:
             self._ensure()
+            snap = self._notes_snapshot()
+            if snap:
+                bits = ", ".join(
+                    f"ch{n['ch']+1} n{n['note']} {n['ms']/1000:.1f}s" for n in snap
+                )
+                self._midi_log(f"PANIC  cortaba {bits}")
+            else:
+                self._midi_log("PANIC  (tracker vacío; si suena, el Note On no llegó)")
             self._silence_all()
             self.params["pitch"] = 8192
             for ch in range(16):
@@ -630,6 +713,7 @@ class SynthEngine:
                 "params": self.params,
                 "bpm": self.bpm,
                 "tcp_connected": self.tcp_connected,
+                "sounding": self._notes_snapshot(),
             }
 
 

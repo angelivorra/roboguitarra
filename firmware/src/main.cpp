@@ -198,18 +198,24 @@ const unsigned long MIDI_REINTENTO_MS = 2000;  // cadencia de reintento
 bool          midiAtascado  = false;
 unsigned long midiReintento = 0;
 
-void midiEnvia(const midiEventPacket_t &ev) {
-  if (midiAtascado) {
-    if (millis() < midiReintento) return;          // descartar sin bloquear
+// Note Off / All Notes Off no se descartan: una nota colgada es peor
+// que un envío lento. El resto (Note On, CC robot) sí se puede tirar.
+bool midiEnvia(const midiEventPacket_t &ev, bool urgente = false) {
+  if (midiAtascado && !urgente) {
+    if (millis() < midiReintento) return false;    // descartar sin bloquear
     midiReintento = millis() + MIDI_REINTENTO_MS;  // toca paquete de sondeo
   }
   unsigned long t0 = millis();
   MidiUSB.sendMIDI(ev);
-  if (millis() - t0 > MIDI_ATASCO_MS) {
+  unsigned long dt = millis() - t0;
+  if (dt > MIDI_ATASCO_MS) {
     if (!midiAtascado)
       Serial.println(F("MIDI atascado: sin consumidor, descartando envios"));
     midiAtascado  = true;
     midiReintento = millis() + MIDI_REINTENTO_MS;
+    Serial.print(F("MIDI LENTO "));
+    Serial.print(dt);
+    Serial.println(F("ms"));
   } else if (midiAtascado) {
     midiAtascado = false;
     Serial.println(F("MIDI recuperado"));
@@ -220,6 +226,7 @@ void midiEnvia(const midiEventPacket_t &ev) {
     }
     MidiUSB.flush();
   }
+  return true;
 }
 
 void midiFlush() {
@@ -228,12 +235,23 @@ void midiFlush() {
 
 void notaOn(uint8_t nota, uint8_t canal) {
   midiEventPacket_t ev = { 0x09, (uint8_t)(0x90 | canal), nota, VELOCIDAD };
-  midiEnvia(ev);
+  if (!midiEnvia(ev)) {
+    Serial.print(F("DROP ON   ch"));
+    Serial.print(canal + 1);
+    Serial.print(F(" nota "));
+    Serial.println(nota);
+  }
 }
 
 void notaOff(uint8_t nota, uint8_t canal) {
   midiEventPacket_t ev = { 0x08, (uint8_t)(0x80 | canal), nota, 0 };
-  midiEnvia(ev);
+  // urgente: el Off no se tira aunque el USB vaya justo (evita drones).
+  if (!midiEnvia(ev, true)) {
+    Serial.print(F("DROP OFF  ch"));
+    Serial.print(canal + 1);
+    Serial.print(F(" nota "));
+    Serial.println(nota);
+  }
 }
 
 // Control Change en todos los canales de cuerda.
@@ -272,6 +290,8 @@ struct EstadoCuerda {
 };
 EstadoCuerda cuerda[NUM_CUERDAS];
 
+int leerSuavizado(uint8_t pin);
+
 // Hay dedo apoyado (aunque esté confirmando la salida).
 bool dedoPresente(const EstadoCuerda &e) {
   return e.estado == DEDO_PUESTO || e.estado == CONFIRMANDO_SUELTA;
@@ -302,26 +322,86 @@ void cambiaNota(EstadoCuerda &e, uint8_t nueva, uint8_t canal) {
   midiFlush();
 
   // Log: nota que empieza a sonar (canal MIDI 1-based + traste, o al aire).
-  Serial.print(F("SUENA  canal "));
+  Serial.print(F("SUENA  ch"));
   Serial.print(canal + 1);
+  Serial.print(F(" nota "));
+  Serial.print(nueva);
   if (dedoPresente(e)) { Serial.print(F("  traste ")); Serial.print(e.traste + 1); }
   else                 { Serial.print(F("  al aire")); }
-  Serial.print(F("  (nota "));
-  Serial.print(nueva);
-  Serial.println(F(")"));
+  if (antNota >= 0 && !(antNota == (int8_t)nueva && antCanal == canal)) {
+    Serial.print(F("  (off n"));
+    Serial.print(antNota);
+    Serial.print(F(" ch"));
+    Serial.print(antCanal + 1);
+    Serial.print(')');
+  }
+  Serial.println();
 }
 
 void apagaCuerda(EstadoCuerda &e) {
   if (e.notaSonando >= 0) {
+    Serial.print(F("CALLA  ch"));
+    Serial.print(e.canalSonando + 1);
+    Serial.print(F(" nota "));
+    Serial.print(e.notaSonando);
+    Serial.println(F("  (dedo fuera)"));
     notaOff(e.notaSonando, e.canalSonando);
     midiFlush();
-    // Log: la nota deja de sonar porque se ha levantado el dedo.
-    Serial.print(F("CALLA  canal "));
-    Serial.print(e.canalSonando + 1);
-    Serial.println(F("  (dedo fuera)"));
   }
   e.notaSonando = -1;
   e.activa = false;
+}
+
+const char *nombreEstado(EstadoDedo e) {
+  switch (e) {
+    case SIN_DEDO:           return "sin";
+    case CONFIRMANDO_PULSA:  return "pulsa";
+    case DEDO_PUESTO:        return "dedo";
+    case CONFIRMANDO_SUELTA: return "suelta";
+  }
+  return "?";
+}
+
+void logCuerda(uint8_t c) {
+  EstadoCuerda &e = cuerda[c];
+  int v = leerSuavizado(PIN_SENSOR[c]);
+  Serial.print(F("  c")); Serial.print(c + 1);
+  Serial.print(F(" v=")); Serial.print(v);
+  Serial.print(F(" est=")); Serial.print(nombreEstado(e.estado));
+  Serial.print(F(" traste="));
+  if (e.traste >= 0) Serial.print(e.traste + 1); else Serial.print('-');
+  Serial.print(F(" activa=")); Serial.print(e.activa ? 1 : 0);
+  Serial.print(F(" n=")); Serial.print(e.notaSonando);
+  Serial.print(F(" dedo=")); Serial.println(dedoPresente(e) ? 1 : 0);
+}
+
+void logSensores(const char *tag) {
+  Serial.print(F("SENS ")); Serial.print(tag);
+  Serial.print(F(" umbral=")); Serial.print(umbralPulsa);
+  Serial.print('/'); Serial.println(umbralSuelta);
+  for (uint8_t c = 0; c < NUM_CUERDAS; c++) logCuerda(c);
+}
+
+void logVivas() {
+  Serial.print(F("VIVAS"));
+  bool alguna = false;
+  for (uint8_t c = 0; c < NUM_CUERDAS; c++) {
+    EstadoCuerda &e = cuerda[c];
+    Serial.print(F("  c"));
+    Serial.print(c + 1);
+    if (e.notaSonando >= 0) {
+      alguna = true;
+      Serial.print(F("=n"));
+      Serial.print(e.notaSonando);
+      Serial.print(F("/ch"));
+      Serial.print(e.canalSonando + 1);
+      Serial.print(e.activa ? F("+") : F("?"));
+    } else {
+      Serial.print(F("=-"));
+    }
+  }
+  if (!alguna) Serial.print(F("  (nada)"));
+  Serial.println();
 }
 
 // Mediana de 3 lecturas: rechaza picos sueltos del SoftPot sin apenas
@@ -366,6 +446,9 @@ void procesaMastil(uint8_t c, unsigned long ahora) {
         e.estado = DEDO_PUESTO;
         e.traste = trasteCrudo(valor);
         e.trastePend = e.traste;
+        Serial.print(F("DEDO c")); Serial.print(c + 1);
+        Serial.print(F(" ON  v=")); Serial.print(valor);
+        Serial.print(F(" traste=")); Serial.println(e.traste + 1);
         if (e.activa) cambiaNota(e, notaActual(c), canalActual(c));
       }
       break;
@@ -425,6 +508,9 @@ void procesaMastil(uint8_t c, unsigned long ahora) {
           Serial.print(F("ms @")); Serial.println(ahora);
         }
       } else if (ahora - e.tEstado >= tSueltaMs) {
+        Serial.print(F("DEDO c")); Serial.print(c + 1);
+        Serial.print(F(" OFF v=")); Serial.print(valor);
+        Serial.println();
         e.estado = SIN_DEDO;
         e.traste = -1;
         e.trastePend = -1;
@@ -466,13 +552,18 @@ unsigned long joyUltimoMs      = 0;
 // Dispara (Note On) las cuerdas que tienen dedo puesto en el mástil.
 // Las que están al aire (sin dedo) no suenan con el gesto del joystick.
 void disparaCuerdas() {
+  uint8_t n = 0;
+  Serial.println(F("RASGUEO"));
+  for (uint8_t c = 0; c < NUM_CUERDAS; c++) logCuerda(c);
   for (uint8_t c = 0; c < NUM_CUERDAS; c++) {
     EstadoCuerda &e = cuerda[c];
     if (dedoPresente(e)) {
+      n++;
       e.activa = true;
       cambiaNota(e, notaActual(c), canalActual(c));
     }
   }
+  if (n == 0) Serial.println(F("RASGUEO vacio (ningun dedo)"));
 }
 
 void procesaJoystick(unsigned long ahora) {
@@ -511,7 +602,11 @@ void procesaJoystick(unsigned long ahora) {
   // disparo para el siguiente toque, en cualquiera de las dos direcciones.
   desv = analogRead(PIN_JOY_TRIGGER) - joyCentroTrigger;
   bool fueraDeCentro = (desv > JOY_ZONA_MUERTA) || (desv < -JOY_ZONA_MUERTA);
-  if (fueraDeCentro && !joyFueraDeCentro) disparaCuerdas();
+  if (fueraDeCentro && !joyFueraDeCentro) {
+    Serial.print(F("JOY trig desv=")); Serial.print(desv);
+    Serial.print(F(" adc=")); Serial.println(analogRead(PIN_JOY_TRIGGER));
+    disparaCuerdas();
+  }
   joyFueraDeCentro = fueraDeCentro;
 
   if (huboEnvio) midiFlush();
@@ -555,6 +650,11 @@ void ejecutarComando(char *s) {
   else if (!strcmp(cmd, "DEBUG")  && a1) {
     int n = atoi(a1);   // 1..NUM_CUERDAS = diagnosticar esa cuerda, 0 = off
     debugCuerda = (n >= 1 && n <= (int)NUM_CUERDAS) ? (int8_t)(n - 1) : -1;
+  }
+  else if (!strcmp(cmd, "VIVAS")) { logVivas(); return; }
+  else if (!strcmp(cmd, "SENS") || !strcmp(cmd, "SENSORES")) {
+    logSensores("cmd");
+    return;
   }
   else if (!strcmp(cmd, "CALIBRAR")) { calibrarGuiado(); return; }
   else { Serial.println(F("? comando desconocido")); return; }
@@ -603,7 +703,8 @@ void setup() {
 
   delay(1500);
   Serial.println(F("Roboguitarra lista (modo normal, 17 trastes)"));
-  Serial.println(F("Comandos: SHOW, SUELTA/TRASTE/PULSA/BOTON <ms>, UMBRAL <p> <s>, HIST <n>, DEBUG <cuerda|0>, CALIBRAR"));
+  Serial.println(F("Comandos: SHOW, SENS, SUELTA/TRASTE/PULSA/BOTON <ms>, UMBRAL <p> <s>, HIST <n>, DEBUG <cuerda|0>, VIVAS, CALIBRAR"));
+  logSensores("reposo");
 }
 
 void loop() {
@@ -613,6 +714,21 @@ void loop() {
 
   procesaJoystick(ahora);
   procesaComandos();
+
+  // Resumen de notas que el firmware cree que siguen sonando.
+  // Si oyes un drone y aquí pone "(nada)", el Off no llegó al sinte.
+  {
+    static unsigned long tVivas = 0;
+    bool alguna = false;
+    for (uint8_t c = 0; c < NUM_CUERDAS; c++)
+      if (cuerda[c].notaSonando >= 0) { alguna = true; break; }
+    if (alguna && ahora - tVivas >= 2000) {
+      tVivas = ahora;
+      logVivas();
+    } else if (!alguna) {
+      tVivas = ahora;
+    }
+  }
 
   // Frecuencia del bucle (solo en modo diagnóstico), una línea por segundo.
   if (debugCuerda >= 0) {
