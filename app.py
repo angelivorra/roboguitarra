@@ -9,6 +9,7 @@ import time
 from flask import Flask, jsonify, render_template, request
 
 import config
+import mastil
 import midi
 import soundfonts
 from synth import engine
@@ -243,6 +244,20 @@ def api_set_params():
 
 
 # --------------------------------------------------------------------- MIDI
+@app.get("/api/mastil")
+def api_mastil():
+    """Estado en vivo de las 3 cuerdas (serie del Leonardo + fallback MIDI)."""
+    mastil.monitor.watch()
+    try:
+        sounding = engine.get_state().get("sounding") or []
+    except Exception:  # noqa: BLE001
+        sounding = []
+    mastil.monitor.apply_midi_notes(sounding)
+    snap = mastil.monitor.snapshot()
+    snap["names"] = list(mastil.STRING_NAMES)
+    return jsonify(snap)
+
+
 @app.get("/api/midi")
 def api_midi():
     try:
@@ -327,6 +342,7 @@ def main():
         engine.set_bpm(bpm, connected=snap.get("tcp_connected"))
 
     tcp_bpm.start_tcp_client(on_bpm=_on_bpm)
+    mastil.monitor.start()
     # Intenta arrancar el motor al inicio (no bloquea si falla)
     engine.start()
     # Restaura el último sf2 e instrumento usados, si los hay

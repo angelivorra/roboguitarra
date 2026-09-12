@@ -277,9 +277,27 @@ document.querySelectorAll(".knob").forEach((el) => {
   knobs[name] = setupKnob(el, KNOB_CONFIG[name] || {});
 });
 
-// Estado básico (motor + soundfont) y sincroniza los knobs con el motor.
+function syncSounding(sounding) {
+  const el = $("midi-notes");
+  if (!el) return;
+  const list = Array.isArray(sounding) ? sounding : [];
+  if (!list.length) {
+    el.textContent = "Notas MIDI: ninguna";
+    el.classList.remove("hint--warn");
+    return;
+  }
+  const bits = list.map((n) => {
+    const s = Math.round((n.ms || 0) / 1000);
+    return `ch${(n.ch || 0) + 1} n${n.note} ${s}s`;
+  });
+  el.textContent = "Notas MIDI: " + bits.join(" · ");
+  const hung = list.some((n) => (n.ms || 0) >= 8000);
+  el.classList.toggle("hint--warn", hung);
+}
+
 function applyState(state) {
   setStatus(state);
+  syncSounding(state.sounding);
   const p = state.params;
   if (!p) return;
   if (knobs.gain && typeof p.gain === "number") knobs.gain.setValue(p.gain);
@@ -348,6 +366,94 @@ $("midi-connect").addEventListener("click", async () => {
 });
 $("panic").addEventListener("click", () => api("/api/panic"));
 
+// ----------------------------------------------------------------- cuerdas
+const FRETS = 17;
+let mastilTimer = null;
+
+function buildMastilStrings() {
+  const root = $("mastil-strings");
+  if (!root || root.childElementCount) return;
+  const names = ["1ª Mi", "2ª Si", "3ª Sol"];
+  names.forEach((name, i) => {
+    const card = document.createElement("article");
+    card.className = "string-card";
+    card.id = `string-card-${i}`;
+    const frets = Array.from({ length: FRETS }, (_, n) =>
+      `<span class="fret" data-fret="${n + 1}">${n + 1}</span>`
+    ).join("");
+    card.innerHTML =
+      `<div class="string-card__head">` +
+      `<span class="string-card__name">${name}</span>` +
+      `<span class="string-card__meta" id="string-meta-${i}">ADC — · traste —</span>` +
+      `</div>` +
+      `<div class="string-card__adc" aria-hidden="true"><span id="string-adc-${i}"></span></div>` +
+      `<div class="frets">${frets}</div>`;
+    root.appendChild(card);
+  });
+}
+
+function paintMastil(data) {
+  const badge = $("mastil-serial");
+  if (badge) {
+    if (data.serial_connected) {
+      badge.textContent = "serie: ok";
+      badge.className = "status status--on";
+      badge.title = data.port || "";
+    } else {
+      badge.textContent = "serie: off";
+      badge.className = "status status--off";
+      badge.title = data.error || "";
+    }
+  }
+  const strings = data.strings || [];
+  for (let i = 0; i < 3; i++) {
+    const s = strings[i] || {};
+    const card = $(`string-card-${i}`);
+    const meta = $(`string-meta-${i}`);
+    const bar = $(`string-adc-${i}`);
+    if (!card || !meta || !bar) continue;
+    const adc = typeof s.adc === "number" ? s.adc : null;
+    const fret = typeof s.fret === "number" ? s.fret : null;
+    const src = s.source === "midi" ? " · MIDI" : "";
+    meta.textContent =
+      `ADC ${adc == null ? "—" : adc} · ` +
+      (s.finger ? `traste ${fret == null ? "?" : fret}` : "al aire") +
+      src;
+    bar.style.width = adc == null ? "0%" : `${Math.min(100, (adc / 1023) * 100)}%`;
+    card.classList.toggle("is-finger", !!s.finger);
+    card.querySelectorAll(".fret").forEach((el) => {
+      el.classList.toggle("is-on", fret != null && Number(el.dataset.fret) === fret);
+    });
+  }
+}
+
+async function pollMastil() {
+  try {
+    paintMastil(await api("/api/mastil"));
+  } catch (err) {
+    /* el siguiente ciclo reintenta */
+  }
+}
+
+function openMastil() {
+  buildMastilStrings();
+  $("mastil-screen").hidden = false;
+  pollMastil();
+  if (mastilTimer) clearInterval(mastilTimer);
+  mastilTimer = setInterval(pollMastil, 120);
+}
+
+function closeMastil() {
+  $("mastil-screen").hidden = true;
+  if (mastilTimer) {
+    clearInterval(mastilTimer);
+    mastilTimer = null;
+  }
+}
+
+$("mastil-open").addEventListener("click", openMastil);
+$("mastil-close").addEventListener("click", closeMastil);
+
 // ----------------------------------------------------------------- arranque
 (async function init() {
   await loadMidiSources();
@@ -359,6 +465,7 @@ $("panic").addEventListener("click", () => api("/api/panic"));
     try {
       const live = await api("/api/params");
       syncDelayTempo(live);
+      syncSounding(live.sounding);
     } catch (err) {
       /* el tempo se actualizará en el siguiente ciclo */
     }

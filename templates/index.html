@@ -5,13 +5,29 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <meta name="theme-color" content="#0d1117" />
   <title>Roboguitarra</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}?v=scroll3" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}?v=cuerdas1" />
 </head>
 <body>
   <header class="topbar">
     <h1>🎸 Roboguitarra</h1>
-    <span id="status" class="status status--off">motor: …</span>
+    <div class="topbar__right">
+      <button id="mastil-open" class="btn btn--small" type="button">Cuerdas</button>
+      <span id="status" class="status status--off">motor: …</span>
+    </div>
   </header>
+
+  <div id="mastil-screen" class="mastil" hidden>
+    <header class="mastil__bar">
+      <button id="mastil-close" class="btn btn--small" type="button">Cerrar</button>
+      <h2>Cuerdas</h2>
+      <span id="mastil-serial" class="status status--off">serie: …</span>
+    </header>
+    <div id="mastil-strings" class="mastil__strings"></div>
+    <p id="mastil-hint" class="hint mastil__hint">
+      Pisá cada cuerda sin rasguear. El número es el traste que ve el Arduino;
+      la barra es la lectura ADC del SoftPot (si no se mueve, el sensor no responde).
+    </p>
+  </div>
 
   <main>
     <!-- 1. Preset (solo los del catálogo) -->
@@ -42,6 +58,7 @@
         <button id="midi-connect" class="btn btn--primary">Conectar</button>
       </div>
       <p id="midi-current" class="hint">—</p>
+      <p id="midi-notes" class="hint">Notas MIDI: ninguna</p>
     </section>
 
     <!-- 3. Modulación (estilo QSynth) -->
@@ -101,6 +118,6 @@
     </section>
   </main>
 
-  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/app.js') }}?v=cuerdas1"></script>
 </body>
 </html>
