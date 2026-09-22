@@ -29,12 +29,17 @@ class Arpeggiator:
             return self._active
 
     def toggle(self):
-        """Arranca o para el arpegiador. Devuelve True si acaba de arrancar."""
+        """Arranca o para el arpegiador. Devuelve True si acaba de arrancar.
+
+        _root_now() se llama ANTES del lock para evitar deadlock:
+        get_state() → arpeggiator.active → lock (que ya tendríamos).
+        """
+        root = self._root_now()  # fuera del lock
+
         with self._lock:
             if self._active:
                 self._active = False
                 return False
-            root = self._root_now()
             if root is None:
                 return False
             self._active = True
