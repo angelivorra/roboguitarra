@@ -614,15 +614,17 @@ class SynthEngine:
                 if cc == config.SPACE_BTN_CC:
                     import arp as _arp
                     if val >= 64:
-                        _arp.arpeggiator.toggle()
-                        self._midi_log(f"ARP toggle → {'ON' if _arp.arpeggiator.active else 'OFF'}")
+                        _arp.arpeggiator.set_mode("major")
+                        self._midi_log(f"ARP → {_arp.arpeggiator.mode}")
                     return 0
                 if val >= 64:
                     if cc == config.PRESET_BTN_CC:
                         self.step_preset(1)
                         return 0
                     if cc == config.PANIC_BTN_CC:
-                        self.panic()
+                        import arp as _arp
+                        _arp.arpeggiator.set_mode("minor")
+                        self._midi_log(f"ARP → {_arp.arpeggiator.mode}")
                         return 0
             elif etype == _MIDI_PROGRAM_CHANGE:
                 getter = getattr(fluidsynth, "fluid_midi_event_get_program", None)
@@ -720,6 +722,7 @@ class SynthEngine:
                 "tcp_connected": self.tcp_connected,
                 "sounding": self._notes_snapshot(),
                 "arp_active": __import__("arp").arpeggiator.active if self.started else False,
+                "arp_mode": __import__("arp").arpeggiator.mode if self.started else "note",
             }
 
 

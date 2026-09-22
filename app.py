@@ -258,8 +258,10 @@ def api_mastil():
     try:
         import arp as _arp
         snap["arp_active"] = _arp.arpeggiator.active
+        snap["arp_mode"] = _arp.arpeggiator.mode
     except Exception:  # noqa: BLE001
         snap["arp_active"] = False
+        snap["arp_mode"] = "note"
     return jsonify(snap)
 
 

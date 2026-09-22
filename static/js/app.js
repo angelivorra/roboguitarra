@@ -410,8 +410,10 @@ function paintMastil(data) {
     const s = strings[i] || {};
     const arcadeBtn = $(`arcade-btn-${i}`);
     if (arcadeBtn) {
-      // Botón 1 (índice 1): LED = arp activo (toggle), no el estado físico del botón
-      const lit = i === 1 ? !!data.arp_active : !!s.btn;
+      const mode = data.arp_mode || "note";
+      const lit = i === 1 ? (mode === "major")
+                : i === 2 ? (mode === "minor")
+                : !!s.btn;
       arcadeBtn.classList.toggle("is-pressed", lit);
     }
     const card = $(`string-card-${i}`);

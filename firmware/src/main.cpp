@@ -61,9 +61,9 @@ const uint8_t CC_ROBOT_CENTRO = 64;  // valor "limpio" (centro del joystick)
 
 // Botones arcade (uno por cuerda). Pulso = CC 127 en el canal 1.
 // Deben coincidir con PRESET_BTN_CC / SPACE_BTN_CC / PANIC_BTN_CC en config.py.
-const uint8_t CC_BTN_PRESET = 21;  // cuerda 1 (Mi agudo): siguiente sonido
-const uint8_t CC_BTN_SPACE  = 22;  // cuerda 2 (Si): sala (reverb+chorus) on/off
-const uint8_t CC_BTN_PANIC  = 23;  // cuerda 3 (Sol): pánico (todo calla)
+const uint8_t CC_BTN_PRESET = 21;  // cuerda 1: siguiente preset
+const uint8_t CC_BTN_SPACE  = 22;  // cuerda 2: arp mayor
+const uint8_t CC_BTN_PANIC  = 23;  // cuerda 3: arp menor
 
 // Joystick: zona muerta (cuentas ADC) y cadencia de envío.
 const int          JOY_ZONA_MUERTA  = 40;
@@ -542,7 +542,7 @@ void procesaBoton(uint8_t c, unsigned long ahora) {
       if (!antes && e.botonEstado) {
         if (c == 0) enviaCCUnCanal(CC_BTN_PRESET, 127);
         if (c == 1) enviaCCUnCanal(CC_BTN_SPACE,  127);
-        // botón 3 sin función por ahora
+        if (c == 2) enviaCCUnCanal(CC_BTN_PANIC,  127);
       }
     }
   } else {

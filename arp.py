@@ -1,17 +1,15 @@
-"""Arpegiador de acorde mayor sincronizado con el BPM de la canción.
+"""Arpegiador sincronizado con el BPM de la canción.
 
-Botón 2 → toggle: primer toque activa, segundo toque desactiva.
-
-Mientras está activo sigue automáticamente la nota más grave que esté
-sonando (excluyendo su propio canal). Cuando la nota cambia, el arpegio
-reinicia desde el principio.
+Botón 2 → modo mayor  (si ya estaba en mayor → nota normal)
+Botón 3 → modo menor  (si ya estaba en menor → nota normal)
+Cambiar de mayor a menor (o viceversa) cambia el modo sin parar el hilo.
 """
 import random
 import threading
 import time
 
-# Notas del acorde menor en dos octavas (intervalos sobre la raíz)
-INTERVALS = [0, 3, 7, 12, 15, 19, 24]
+MAJOR_INTERVALS = [0, 4, 7, 12, 16, 19, 24]
+MINOR_INTERVALS = [0, 3, 7, 12, 15, 19, 24]
 
 ARP_CHANNEL = 3
 DEFAULT_BPM = 180.0
@@ -21,6 +19,7 @@ class Arpeggiator:
     def __init__(self):
         self._lock = threading.Lock()
         self._active = False
+        self._mode = "note"   # "note" | "major" | "minor"
         self._engine = None
 
     def bind(self, engine):
@@ -31,15 +30,25 @@ class Arpeggiator:
         with self._lock:
             return self._active
 
-    def toggle(self):
-        """Alterna entre activo e inactivo."""
+    @property
+    def mode(self):
+        with self._lock:
+            return self._mode
+
+    def set_mode(self, requested):
+        """Activa 'major' o 'minor'. Si ya estaba en ese modo → vuelve a 'note'."""
         root = self._current_root()  # fuera del lock para evitar deadlock
         with self._lock:
-            if self._active:
+            if self._mode == requested:
                 self._active = False
+                self._mode = "note"
                 return
+            was_active = self._active
             self._active = True
-        threading.Thread(target=self._run, args=(root,), daemon=True, name="arp").start()
+            self._mode = requested
+        if not was_active:
+            threading.Thread(target=self._run, args=(root,), daemon=True, name="arp").start()
+        # Si ya estaba activo (cambio de modo), el hilo recoge _mode en el próximo ciclo
 
     # ----------------------------------------------------------------- interno
 
@@ -61,7 +70,6 @@ class Arpeggiator:
         return eng.bpm if eng.bpm else DEFAULT_BPM
 
     def _run(self, initial_root):
-        step = 0
         last_note = None
         last_root = initial_root
         eng = self._engine
@@ -71,7 +79,9 @@ class Arpeggiator:
             with self._lock:
                 if not self._active:
                     break
+                current_mode = self._mode
 
+            intervals = MAJOR_INTERVALS if current_mode == "major" else MINOR_INTERVALS
             root = self._current_root()
 
             if root != last_root:
@@ -81,20 +91,14 @@ class Arpeggiator:
                     except Exception:
                         pass
                     last_note = None
-                step = 0
                 last_root = root
 
             if root is None:
                 time.sleep(0.04)
                 continue
 
-            effective_root = root
-
-            # semicorcheas: 60/BPM/4 por paso
-            interval = 60.0 / self._bpm() / 4
-
-            chord = [effective_root + i for i in INTERVALS]
-            # Elige aleatoriamente evitando repetir la misma nota dos veces seguidas
+            interval = 60.0 / self._bpm() / 4  # semicorcheas
+            chord = [root + i for i in intervals]
             choices = [n for n in chord if n != last_note] or chord
             note = max(0, min(127, random.choice(choices)))
 
