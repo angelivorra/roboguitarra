@@ -615,6 +615,7 @@ class SynthEngine:
                     import arp as _arp
                     if val >= 64:
                         _arp.arpeggiator.toggle()
+                        self._midi_log(f"ARP toggle → {'ON' if _arp.arpeggiator.active else 'OFF'}")
                     return 0
                 if val >= 64:
                     if cc == config.PRESET_BTN_CC:
