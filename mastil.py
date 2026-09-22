@@ -13,8 +13,8 @@ from pathlib import Path
 
 
 NUM_CUERDAS = 3
-STRING_NAMES = ("3ª→Si", "2ª→Mi", "1ª(off)")
-OPEN_NOTES = (59, 64, 55)  # nota al aire por cuerda (mismo que el firmware)
+STRING_NAMES = ("Re (D2)", "Sol (G2)", "— (off)")
+OPEN_NOTES = (38, 43, 55)  # nota al aire por cuerda (mismo que el firmware)
 
 _SENS_INTERVAL = 0.15
 _WATCH_TTL = 2.5
