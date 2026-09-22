@@ -32,8 +32,9 @@ const uint8_t PIN_JOY_TRIGGER = A5;  // eje de disparo de nota (antes CC robot)
 const uint8_t PIN_JOY_BTN     = 6;   // pulsador del stick (sin función aún)
 
 // Afinación de bajo (G-D). Cuerda problemática (índice 2) desactivada.
-//   c1 (índice 0) → Re2 (D2, 38)   c2 (índice 1) → Sol2 (G2, 43)
-const uint8_t NOTA_AIRE[NUM_CUERDAS] = { 38, 43, 55 };
+//   c1/UI-1 (índice 0) → Sol2 (G2, 43, más aguda, 2ª bajo)
+//   c2/UI-2 (índice 1) → Re2 (D2, 38, más grave, 1ª bajo)
+const uint8_t NOTA_AIRE[NUM_CUERDAS] = { 43, 38, 55 };
 
 // Cuerdas habilitadas. Poner false para desactivar una cuerda completamente
 // (no procesa el sensor ni dispara notas). Útil para cuerdas con ruido.
