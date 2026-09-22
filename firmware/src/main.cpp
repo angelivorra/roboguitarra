@@ -524,9 +524,12 @@ void procesaMastil(uint8_t c, unsigned long ahora) {
       break;
   }
 
-  // ---- Botón arcade: un toque (no al soltar). Cuerda 1 = siguiente
-  // sonido, 2 = sala on/off, 3 = pánico. El rasgueo sigue siendo el
-  // joystick (procesaJoystick/disparaCuerdas).
+}
+
+// Botón arcade: separado de procesaMastil para que funcione aunque la
+// cuerda esté desactivada (CUERDA_ACTIVA[c] == false).
+void procesaBoton(uint8_t c, unsigned long ahora) {
+  EstadoCuerda &e = cuerda[c];
   bool lecturaBoton = (digitalRead(PIN_BOTON[c]) == LOW);
   if (lecturaBoton != e.botonEstado) {
     if (e.tBoton == 0) e.tBoton = ahora;
@@ -715,8 +718,10 @@ void setup() {
 void loop() {
   unsigned long ahora = millis();
 
-  for (uint8_t c = 0; c < NUM_CUERDAS; c++)
+  for (uint8_t c = 0; c < NUM_CUERDAS; c++) {
     if (CUERDA_ACTIVA[c]) procesaMastil(c, ahora);
+    else procesaBoton(c, ahora);
+  }
 
   procesaJoystick(ahora);
   procesaComandos();
