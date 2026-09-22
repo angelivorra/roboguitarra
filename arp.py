@@ -6,11 +6,12 @@ Mientras está activo sigue automáticamente la nota más grave que esté
 sonando (excluyendo su propio canal). Cuando la nota cambia, el arpegio
 reinicia desde el principio.
 """
+import random
 import threading
 import time
 
-# Dos octavas arriba y de vuelta: sube hasta el 24 y baja zigzagueando
-PATTERN = [0, 3, 7, 12, 7, 3, 0, 12, 19, 24, 19, 12, 7, 3, 0, 3]
+# Notas del acorde menor en dos octavas (intervalos sobre la raíz)
+INTERVALS = [0, 3, 7, 12, 15, 19, 24]
 
 ARP_CHANNEL = 3
 DEFAULT_BPM = 180.0
@@ -92,8 +93,10 @@ class Arpeggiator:
             # semicorcheas: 60/BPM/4 por paso
             interval = 60.0 / self._bpm() / 4
 
-            note = effective_root + PATTERN[step % len(PATTERN)]
-            note = max(0, min(127, note))
+            chord = [effective_root + i for i in INTERVALS]
+            # Elige aleatoriamente evitando repetir la misma nota dos veces seguidas
+            choices = [n for n in chord if n != last_note] or chord
+            note = max(0, min(127, random.choice(choices)))
 
             if last_note is not None and last_note != note:
                 try:
@@ -107,7 +110,6 @@ class Arpeggiator:
             except Exception:
                 break
 
-            step += 1
             time.sleep(interval)
 
         if last_note is not None:
