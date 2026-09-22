@@ -62,8 +62,7 @@ class Arpeggiator:
     def _run(self, initial_root):
         step = 0
         last_note = None
-        last_root = initial_root      # raíz actualmente seguida
-        latched_root = initial_root   # última raíz vista (se mantiene al soltar)
+        last_root = initial_root
         eng = self._engine
         ch = ARP_CHANNEL
 
@@ -74,27 +73,21 @@ class Arpeggiator:
 
             root = self._current_root()
 
-            # Actualiza la nota latched cuando hay una nota sonando
-            if root is not None and root != latched_root:
-                latched_root = root
-
-            # Reinicia el paso solo cuando cambia la nota real (no en silencio)
             if root != last_root:
-                if root is not None:
-                    if last_note is not None:
-                        try:
-                            eng.note_off(key=last_note, channel=ch)
-                        except Exception:
-                            pass
-                        last_note = None
-                    step = 0
+                if last_note is not None:
+                    try:
+                        eng.note_off(key=last_note, channel=ch)
+                    except Exception:
+                        pass
+                    last_note = None
+                step = 0
                 last_root = root
 
-            # Usa la nota latcheada para seguir tocando aunque sueltes la cuerda
-            effective_root = latched_root
-            if effective_root is None:
+            if root is None:
                 time.sleep(0.04)
                 continue
+
+            effective_root = root
 
             # semicorcheas: 60/BPM/4 por paso
             interval = 60.0 / self._bpm() / 4
