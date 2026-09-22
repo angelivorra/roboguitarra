@@ -10,7 +10,7 @@ import threading
 import time
 
 # Dos octavas arriba y de vuelta: sube hasta el 24 y baja zigzagueando
-PATTERN = [0, 4, 7, 12, 7, 4, 0, 12, 19, 24, 19, 12, 7, 4, 0, 4]
+PATTERN = [0, 3, 7, 12, 7, 3, 0, 12, 19, 24, 19, 12, 7, 3, 0, 3]
 
 ARP_CHANNEL = 3
 DEFAULT_BPM = 180.0
