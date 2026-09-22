@@ -25,7 +25,7 @@ _RE_DEDO = re.compile(
     r"DEDO c(\d+) (ON|OFF)\s+v=(\d+)(?:\s+traste=(\d+))?"
 )
 _RE_CUERDA = re.compile(
-    r"^\s*c(\d+) v=(\d+) est=(\S+) traste=(\S+) activa=(\d+) n=(\S+) dedo=(\d+)"
+    r"^\s*c(\d+) v=(\d+) est=(\S+) traste=(\S+) activa=(\d+) n=(\S+) dedo=(\d+)(?:\s+btn=(\d+))?"
 )
 
 
@@ -37,6 +37,7 @@ def _empty_string():
         "state": "sin",
         "note": None,
         "source": None,
+        "btn": False,
     }
 
 
@@ -220,17 +221,19 @@ class MastilMonitor:
         finger = m.group(7) == "1" or state in ("dedo", "suelta", "pulsa")
         if not finger:
             fret = None
+        btn = m.group(8) == "1" if m.group(8) is not None else None
         with self._lock:
-            self._strings[idx].update(
-                {
-                    "adc": adc,
-                    "fret": fret,
-                    "finger": finger,
-                    "state": state,
-                    "note": note,
-                    "source": "serial",
-                }
-            )
+            update = {
+                "adc": adc,
+                "fret": fret,
+                "finger": finger,
+                "state": state,
+                "note": note,
+                "source": "serial",
+            }
+            if btn is not None:
+                update["btn"] = btn
+            self._strings[idx].update(update)
 
 
 def _find_port():

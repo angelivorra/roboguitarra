@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <meta name="theme-color" content="#0d1117" />
   <title>Roboguitarra</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}?v=cuerdas1" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}?v=cuerdas2" />
 </head>
 <body>
   <header class="topbar">
@@ -23,6 +23,20 @@
       <span id="mastil-serial" class="status status--off">serie: …</span>
     </header>
     <div id="mastil-strings" class="mastil__strings"></div>
+    <div class="mastil__buttons">
+      <div class="arcade-btn" id="arcade-btn-0">
+        <span class="arcade-btn__led"></span>
+        <span class="arcade-btn__label">1ª · Sig. preset</span>
+      </div>
+      <div class="arcade-btn" id="arcade-btn-1">
+        <span class="arcade-btn__led"></span>
+        <span class="arcade-btn__label">2ª · —</span>
+      </div>
+      <div class="arcade-btn" id="arcade-btn-2">
+        <span class="arcade-btn__led"></span>
+        <span class="arcade-btn__label">3ª · — (desact.)</span>
+      </div>
+    </div>
     <p id="mastil-hint" class="hint mastil__hint">
       Pisá cada cuerda sin rasguear. El número es el traste que ve el Arduino;
       la barra es la lectura ADC del SoftPot (si no se mueve, el sensor no responde).
@@ -118,6 +132,6 @@
     </section>
   </main>
 
-  <script src="{{ url_for('static', filename='js/app.js') }}?v=cuerdas1"></script>
+  <script src="{{ url_for('static', filename='js/app.js') }}?v=cuerdas2"></script>
 </body>
 </html>

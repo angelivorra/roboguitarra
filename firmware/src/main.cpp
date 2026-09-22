@@ -376,7 +376,8 @@ void logCuerda(uint8_t c) {
   if (e.traste >= 0) Serial.print(e.traste + 1); else Serial.print('-');
   Serial.print(F(" activa=")); Serial.print(e.activa ? 1 : 0);
   Serial.print(F(" n=")); Serial.print(e.notaSonando);
-  Serial.print(F(" dedo=")); Serial.println(dedoPresente(e) ? 1 : 0);
+  Serial.print(F(" dedo=")); Serial.print(dedoPresente(e) ? 1 : 0);
+  Serial.print(F(" btn=")); Serial.println(e.botonEstado ? 1 : 0);
 }
 
 void logSensores(const char *tag) {

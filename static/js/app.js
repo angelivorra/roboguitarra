@@ -408,6 +408,8 @@ function paintMastil(data) {
   const strings = data.strings || [];
   for (let i = 0; i < 3; i++) {
     const s = strings[i] || {};
+    const arcadeBtn = $(`arcade-btn-${i}`);
+    if (arcadeBtn) arcadeBtn.classList.toggle("is-pressed", !!s.btn);
     const card = $(`string-card-${i}`);
     const meta = $(`string-meta-${i}`);
     const bar = $(`string-adc-${i}`);

@@ -262,3 +262,42 @@ select { flex: 1; min-width: 0; }
   color: var(--ok);
   font-weight: 700;
 }
+.mastil__buttons {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  max-width: 720px;
+  margin: 0 auto;
+  width: 100%;
+  border-top: 1px solid var(--border);
+}
+.arcade-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.65rem 0.5rem;
+}
+.arcade-btn__led {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--card-2);
+  border: 2px solid var(--border);
+  transition: background 80ms, border-color 80ms, box-shadow 80ms;
+}
+.arcade-btn.is-pressed .arcade-btn__led {
+  background: var(--ok);
+  border-color: var(--ok);
+  box-shadow: 0 0 8px rgba(63, 185, 80, 0.5);
+}
+.arcade-btn__label {
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.2;
+}
