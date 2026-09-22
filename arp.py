@@ -1,19 +1,19 @@
 """Arpegiador de acorde mayor sincronizado con el BPM de la canción.
 
-Botón 2 mantenido → arp ON (CC 22 = 127).
-Botón 2 suelto    → arp OFF (CC 22 = 0).
+Botón 2 → toggle: primer toque activa, segundo toque desactiva.
 
-Mientras está activo el arp sigue automáticamente la nota más grave
-que esté sonando en ese momento (excluyendo su propio canal).
-Cuando la nota cambia, el arpegio reinicia desde la raíz.
-Si no hay nota, espera en silencio.
+Mientras está activo sigue automáticamente la nota más grave que esté
+sonando (excluyendo su propio canal). Cuando la nota cambia, el arpegio
+reinicia desde el principio.
 """
 import threading
 import time
 
-MAJOR = [0, 4, 7, 12]   # root, 3ª mayor, 5ª justa, octava
-ARP_CHANNEL = 3          # canal FluidSynth reservado (ya programado con el mismo instrumento)
-DEFAULT_BPM = 180.0      # tempo si no hay señal TCP
+# Dos octavas arriba y de vuelta: sube hasta el 24 y baja zigzagueando
+PATTERN = [0, 4, 7, 12, 7, 4, 0, 12, 19, 24, 19, 12, 7, 4, 0, 4]
+
+ARP_CHANNEL = 3
+DEFAULT_BPM = 180.0
 
 
 class Arpeggiator:
@@ -30,23 +30,19 @@ class Arpeggiator:
         with self._lock:
             return self._active
 
-    def start(self):
-        """Arranca el arp (botón pulsado). Sin efecto si ya está activo."""
+    def toggle(self):
+        """Alterna entre activo e inactivo."""
+        root = self._current_root()  # fuera del lock para evitar deadlock
         with self._lock:
             if self._active:
+                self._active = False
                 return
             self._active = True
-        threading.Thread(target=self._run, daemon=True, name="arp").start()
-
-    def stop(self):
-        """Para el arp (botón suelto)."""
-        with self._lock:
-            self._active = False
+        threading.Thread(target=self._run, args=(root,), daemon=True, name="arp").start()
 
     # ----------------------------------------------------------------- interno
 
     def _current_root(self):
-        """Nota más grave sonando ahora, ignorando el canal del arp."""
         eng = self._engine
         if eng is None:
             return None
@@ -63,10 +59,10 @@ class Arpeggiator:
             return DEFAULT_BPM
         return eng.bpm if eng.bpm else DEFAULT_BPM
 
-    def _run(self):
+    def _run(self, initial_root):
         step = 0
         last_note = None
-        last_root = None
+        last_root = initial_root
         eng = self._engine
         ch = ARP_CHANNEL
 
@@ -77,7 +73,6 @@ class Arpeggiator:
 
             root = self._current_root()
 
-            # Nueva nota raíz: reinicia el arpegio desde el principio
             if root != last_root:
                 if last_note is not None:
                     try:
@@ -92,10 +87,11 @@ class Arpeggiator:
                 time.sleep(0.04)
                 continue
 
-            chord = [root + i for i in MAJOR]
-            interval = 60.0 / self._bpm() / 2  # corcheas
+            # semicorcheas: 60/BPM/4 por paso
+            interval = 60.0 / self._bpm() / 4
 
-            note = chord[step % len(chord)]
+            note = root + PATTERN[step % len(PATTERN)]
+            note = max(0, min(127, note))
 
             if last_note is not None and last_note != note:
                 try:
@@ -104,7 +100,7 @@ class Arpeggiator:
                     pass
 
             try:
-                eng.note_on(key=note, velocity=80, channel=ch)
+                eng.note_on(key=note, velocity=90, channel=ch)
                 last_note = note
             except Exception:
                 break
@@ -112,7 +108,6 @@ class Arpeggiator:
             step += 1
             time.sleep(interval)
 
-        # Limpieza al soltar el botón
         if last_note is not None:
             try:
                 eng.note_off(key=last_note, channel=ch)

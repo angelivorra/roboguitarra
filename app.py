@@ -255,6 +255,11 @@ def api_mastil():
     mastil.monitor.apply_midi_notes(sounding)
     snap = mastil.monitor.snapshot()
     snap["names"] = list(mastil.STRING_NAMES)
+    try:
+        import arp as _arp
+        snap["arp_active"] = _arp.arpeggiator.active
+    except Exception:  # noqa: BLE001
+        snap["arp_active"] = False
     return jsonify(snap)
 
 

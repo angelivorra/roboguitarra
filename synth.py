@@ -614,9 +614,7 @@ class SynthEngine:
                 if cc == config.SPACE_BTN_CC:
                     import arp as _arp
                     if val >= 64:
-                        _arp.arpeggiator.start()
-                    else:
-                        _arp.arpeggiator.stop()
+                        _arp.arpeggiator.toggle()
                     return 0
                 if val >= 64:
                     if cc == config.PRESET_BTN_CC:

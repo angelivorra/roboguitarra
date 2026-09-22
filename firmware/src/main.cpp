@@ -540,12 +540,9 @@ void procesaBoton(uint8_t c, unsigned long ahora) {
       e.botonEstado = lecturaBoton;
       e.tBoton = 0;
       if (!antes && e.botonEstado) {
-        // flanco de subida: botón pulsado
         if (c == 0) enviaCCUnCanal(CC_BTN_PRESET, 127);
         if (c == 1) enviaCCUnCanal(CC_BTN_SPACE,  127);
-      } else if (antes && !e.botonEstado) {
-        // flanco de bajada: botón soltado
-        if (c == 1) enviaCCUnCanal(CC_BTN_SPACE,  0);
+        // botón 3 sin función por ahora
       }
     }
   } else {

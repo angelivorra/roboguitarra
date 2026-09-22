@@ -409,7 +409,11 @@ function paintMastil(data) {
   for (let i = 0; i < 3; i++) {
     const s = strings[i] || {};
     const arcadeBtn = $(`arcade-btn-${i}`);
-    if (arcadeBtn) arcadeBtn.classList.toggle("is-pressed", !!s.btn);
+    if (arcadeBtn) {
+      // Botón 1 (índice 1): LED = arp activo (toggle), no el estado físico del botón
+      const lit = i === 1 ? !!data.arp_active : !!s.btn;
+      arcadeBtn.classList.toggle("is-pressed", lit);
+    }
     const card = $(`string-card-${i}`);
     const meta = $(`string-meta-${i}`);
     const bar = $(`string-adc-${i}`);
