@@ -34,6 +34,10 @@ const uint8_t PIN_JOY_BTN     = 6;   // pulsador del stick (sin función aún)
 // Nota MIDI de cada cuerda al aire: 1ª = Mi4 (64), 2ª = Si3 (59), 3ª = Sol3 (55).
 const uint8_t NOTA_AIRE[NUM_CUERDAS] = { 64, 59, 55 };
 
+// Cuerdas habilitadas. Poner false para desactivar una cuerda completamente
+// (no procesa el sensor ni dispara notas). Útil para cuerdas con ruido.
+const bool CUERDA_ACTIVA[NUM_CUERDAS] = { true, true, false };  // cuerda 3 desactivada
+
 const uint8_t VELOCIDAD  = 100;
 
 // Canales MIDI (0..15 en el byte de estado = canales 1..16).
@@ -531,8 +535,7 @@ void procesaMastil(uint8_t c, unsigned long ahora) {
       e.tBoton = 0;
       if (!antes && e.botonEstado) {
         if (c == 0) enviaCCUnCanal(CC_BTN_PRESET, 127);
-        else if (c == 1) enviaCCUnCanal(CC_BTN_SPACE, 127);
-        else enviaCCUnCanal(CC_BTN_PANIC, 127);
+        // botones 2 y 3 sin función por ahora
       }
     }
   } else {
@@ -556,6 +559,7 @@ void disparaCuerdas() {
   Serial.println(F("RASGUEO"));
   for (uint8_t c = 0; c < NUM_CUERDAS; c++) logCuerda(c);
   for (uint8_t c = 0; c < NUM_CUERDAS; c++) {
+    if (!CUERDA_ACTIVA[c]) continue;
     EstadoCuerda &e = cuerda[c];
     if (dedoPresente(e)) {
       n++;
@@ -710,7 +714,8 @@ void setup() {
 void loop() {
   unsigned long ahora = millis();
 
-  for (uint8_t c = 0; c < NUM_CUERDAS; c++) procesaMastil(c, ahora);
+  for (uint8_t c = 0; c < NUM_CUERDAS; c++)
+    if (CUERDA_ACTIVA[c]) procesaMastil(c, ahora);
 
   procesaJoystick(ahora);
   procesaComandos();
