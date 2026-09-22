@@ -720,7 +720,7 @@ void loop() {
 
   for (uint8_t c = 0; c < NUM_CUERDAS; c++) {
     if (CUERDA_ACTIVA[c]) procesaMastil(c, ahora);
-    else procesaBoton(c, ahora);
+    procesaBoton(c, ahora);
   }
 
   procesaJoystick(ahora);
