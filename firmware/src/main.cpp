@@ -31,14 +31,15 @@ const uint8_t PIN_JOY_MOD     = A4;  // eje de modulación (antes pitch bend)
 const uint8_t PIN_JOY_TRIGGER = A5;  // eje de disparo de nota (antes CC robot)
 const uint8_t PIN_JOY_BTN     = 6;   // pulsador del stick (sin función aún)
 
-// Nota MIDI de cada cuerda al aire. Cuerdas 2 y 3 remapeadas para que las
-// dos sensores que funcionan reproduzcan las dos primeras cuerdas de guitarra:
-//   c1 = Mi agudo (E4, 64)  c2 = Mi agudo (E4, 64)  c3 = Si (B3, 59)
-const uint8_t NOTA_AIRE[NUM_CUERDAS] = { 64, 64, 59 };
+// Nota MIDI de cada cuerda al aire. La cuerda problemática (Sol, índice 2)
+// está desactivada. Las otras dos se remapean para que suenen como las dos
+// primeras cuerdas de guitarra:
+//   c1 (sensor Mi) → Si (B3, 59)   c2 (sensor Si) → Mi agudo (E4, 64)
+const uint8_t NOTA_AIRE[NUM_CUERDAS] = { 59, 64, 55 };
 
 // Cuerdas habilitadas. Poner false para desactivar una cuerda completamente
 // (no procesa el sensor ni dispara notas). Útil para cuerdas con ruido.
-const bool CUERDA_ACTIVA[NUM_CUERDAS] = { true, true, true };  // c3 reactivada (ahora toca Si)
+const bool CUERDA_ACTIVA[NUM_CUERDAS] = { true, true, false };  // c3 (Sol, problemática) desactivada
 
 const uint8_t VELOCIDAD  = 100;
 
