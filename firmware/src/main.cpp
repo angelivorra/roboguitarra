@@ -541,7 +541,8 @@ void procesaBoton(uint8_t c, unsigned long ahora) {
       e.tBoton = 0;
       if (!antes && e.botonEstado) {
         if (c == 0) enviaCCUnCanal(CC_BTN_PRESET, 127);
-        // botones 2 y 3 sin función por ahora
+        if (c == 1) enviaCCUnCanal(CC_BTN_SPACE,  127);
+        // botón 3 sin función por ahora
       }
     }
   } else {

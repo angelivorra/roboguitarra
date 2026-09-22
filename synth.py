@@ -118,6 +118,8 @@ class SynthEngine:
                 self.started = True
                 self.error = None
                 self._start_notes_watch()
+                import arp as _arp
+                _arp.arpeggiator.bind(self)
             except Exception as exc:  # noqa: BLE001
                 self.error = f"{type(exc).__name__}: {exc}"
                 self.started = False
@@ -614,7 +616,8 @@ class SynthEngine:
                         self.step_preset(1)
                         return 0
                     if cc == config.SPACE_BTN_CC:
-                        self.set_space_on(not self.params.get("space_on", True))
+                        import arp as _arp
+                        _arp.arpeggiator.toggle()
                         return 0
                     if cc == config.PANIC_BTN_CC:
                         self.panic()
@@ -714,6 +717,7 @@ class SynthEngine:
                 "bpm": self.bpm,
                 "tcp_connected": self.tcp_connected,
                 "sounding": self._notes_snapshot(),
+                "arp_active": __import__("arp").arpeggiator.active if self.started else False,
             }
 
 
